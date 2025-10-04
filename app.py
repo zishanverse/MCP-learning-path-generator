@@ -59,7 +59,7 @@ st.info("""
 # Main content area
 st.header("Enter Your Goal")
 user_goal = st.text_input("Enter your learning goal:",
-                        help="Describe what you want to learn, and we'll generate a structured path using YouTube content and your selected tool.")
+                         help="Describe what you want to learn, and we'll generate a structured path using YouTube content and your selected tool.")
 
 # Progress area
 progress_container = st.container()
@@ -118,6 +118,9 @@ if st.button("Generate Learning Path", type="primary", disabled=st.session_state
     elif not user_goal:
         st.warning("Please enter your learning goal.")
     else:
+        # Placeholder for output
+        output_placeholder = st.empty()
+        
         try:
             # Set generating flag
             st.session_state.is_generating = True
@@ -138,15 +141,18 @@ if st.button("Generate Learning Path", type="primary", disabled=st.session_state
             
             # Display results
             st.header("Your Learning Path")
-            # print(result)
-            if result and "messages" in result:
-                for msg in result["messages"]:
-                    st.markdown(f"📚 {msg.content}")
-
+            
+            # **HIGHLIGHTED CHANGE 2/2**: Directly display the returned string using st.markdown()
+            if result:
+                st.markdown(result) 
             else:
-                st.error("No results were generated. Please try again.")
-                st.session_state.is_generating = False
+                st.error("No content was returned by the model. Please check logs for errors or try a different prompt.")
+            
+
+            st.session_state.is_generating = False
+
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.error("Please check your API keys and URLs, and try again.")
             st.session_state.is_generating = False
+

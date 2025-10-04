@@ -445,7 +445,7 @@ def run_agent_sync(
     user_goal: str = "",
     connected_account_id: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None
-) -> dict:
+) -> str: # 🌟
     """
     Synchronous wrapper for running the agent.
     """
@@ -469,9 +469,9 @@ IMPORTANT TOOL USAGE AND OUTPUT INSTRUCTIONS:
 1. When searching for YouTube videos, use the 'q' parameter with your search query
 2. Always format your final response as a clean, structured learning path
 3. For each day, provide:
-   - Day number and topic
-   - Specific YouTube video with title, URL, and brief description
-   - Key learning objectives for that day
+    - Day number and topic
+    - Specific YouTube video with title, URL, and brief description
+    - Key learning objectives for that day
 4. Do NOT include raw API responses in your final answer
 5. Focus on creating a professional, readable learning plan
 6. If tools return errors, provide alternative suggestions but still create a complete plan
@@ -504,7 +504,19 @@ Remember: Create a professional, complete learning path regardless of any tool i
             if progress_callback:
                 progress_callback("Learning path generation complete!")
             
-            return result
+            # 🌟 START OF HIGHLIGHTED CHANGES 🌟
+            # Extract the final content from the agent's response
+            if isinstance(result, dict) and "messages" in result:
+                # The final answer is typically in the content of the last message
+                final_message = result["messages"][-1]
+                if hasattr(final_message, "content"):
+                    return final_message.content
+                else:
+                    return str(result) # Fallback if content not found
+            else:
+                return str(result) # Fallback if structure is unexpected
+            # 🌟 END OF HIGHLIGHTED CHANGES 🌟
+            
         except Exception as e:
             print(f"Error in _run: {str(e)}")
             import traceback
