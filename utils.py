@@ -4,19 +4,62 @@ from prompt import user_goal_prompt
 from langgraph.prebuilt import create_react_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint 
+from huggingface_hub import InferenceClient
+from dotenv import load_dotenv
+import os
 from langchain_core.tools import BaseTool
 from typing import Optional, Tuple, Any, Callable, Dict, List
 import asyncio
 import json
 from pydantic import BaseModel, Field, field_validator
 
+# HIGHLIGHT: Load environment variables from the .env file
+load_dotenv()
+
 cfg = RunnableConfig(recursion_limit=100)
 
-def initialize_model(google_api_key: str) -> ChatGoogleGenerativeAI:
-    return ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        google_api_key=google_api_key
-    )
+# ✅ HIGHLIGHT: Updated function to dynamically initialize any supported model
+def initialize_model(model_name: str) -> Any:
+    if "gemini" in model_name:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("Google API key not found. Please set GOOGLE_API_KEY in your .env file.")
+        return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
+
+    # ✅ Claude replacement → Hugging Face LLaMA
+    elif "claude" in model_name or "llama" in model_name:
+        hf_key = os.getenv("HF_API_KEY")
+        if not hf_key:
+            raise ValueError("Hugging Face API key not found. Please set HF_API_KEY in your .env file.")
+         # 1. Create the basic endpoint
+        llm = HuggingFaceEndpoint(
+            # repo_id="meta-llama/Meta-Llama-3-8B-Instruct",
+            repo_id="NousResearch/Meta-Llama-3-8B-Instruct", 
+            # task="text-generation",
+            max_new_tokens=1024,
+            huggingfacehub_api_token=hf_key
+        )
+        
+        # 2. Wrap it in a ChatHuggingFace object
+        return ChatHuggingFace(llm=llm)
+    # ✅ Mistral via Hugging Face
+    elif "mistral" in model_name:
+        hf_key = os.getenv("HF_API_KEY")
+        if not hf_key:
+            raise ValueError("Hugging Face API key not found. Please set HF_API_KEY in your .env file.")
+        # 1. Create the basic endpoint
+        llm = HuggingFaceEndpoint(
+            repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+            # task="text-generation",
+            max_new_tokens=1024,
+            huggingfacehub_api_token=hf_key
+        )
+        
+        # 2. Wrap it in a ChatHuggingFace object
+        return ChatHuggingFace(llm=llm)
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
 
 class ComposioAwareTool(BaseTool):
     """Tool wrapper that handles Composio-specific requirements"""
@@ -341,12 +384,13 @@ For now, I'll continue with the learning path creation using general recommendat
             return error_msg
 
 async def setup_agent_with_tools(
-    google_api_key: str,
+    # google_api_key: str,
     youtube_pipedream_url: str,
     drive_pipedream_url: Optional[str] = None,
     notion_pipedream_url: Optional[str] = None,
     connected_account_id: Optional[str] = None,
-    progress_callback: Optional[Callable[[str], None]] = None
+    progress_callback: Optional[Callable[[str], None]] = None,
+    model_name: str = "gemini-2.5-flash"
 ) -> Any:
     """
     Set up the agent with Composio-aware tools
@@ -417,8 +461,8 @@ async def setup_agent_with_tools(
         if progress_callback:
             progress_callback(f"Successfully processed {len(smart_tools)} tools... ✅")
         
-        # Create model
-        model = initialize_model(google_api_key)
+        # ✅ HIGHLIGHT: Use free initialize_model
+        model = initialize_model(model_name)
         
         if progress_callback:
             progress_callback("Creating agent with smart tools... ✅")
@@ -438,13 +482,14 @@ async def setup_agent_with_tools(
         raise
 
 def run_agent_sync(
-    google_api_key: str,
+    # google_api_key: str,
     youtube_pipedream_url: str,
     drive_pipedream_url: Optional[str] = None,
     notion_pipedream_url: Optional[str] = None,
     user_goal: str = "",
     connected_account_id: Optional[str] = None,
-    progress_callback: Optional[Callable[[str], None]] = None
+    progress_callback: Optional[Callable[[str], None]] = None,
+    model_name: str = "gemini-2.5-flash"
 ) -> str: # 🌟
     """
     Synchronous wrapper for running the agent.
@@ -452,12 +497,13 @@ def run_agent_sync(
     async def _run():
         try:
             agent = await setup_agent_with_tools(
-                google_api_key=google_api_key,
+                # google_api_key=google_api_key,
                 youtube_pipedream_url=youtube_pipedream_url,
                 drive_pipedream_url=drive_pipedream_url,
                 notion_pipedream_url=notion_pipedream_url,
                 connected_account_id=connected_account_id,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                model_name=model_name
             )
             
             # Enhanced prompt with specific instructions for better output formatting
@@ -504,7 +550,6 @@ Remember: Create a professional, complete learning path regardless of any tool i
             if progress_callback:
                 progress_callback("Learning path generation complete!")
             
-            # 🌟 START OF HIGHLIGHTED CHANGES 🌟
             # Extract the final content from the agent's response
             if isinstance(result, dict) and "messages" in result:
                 # The final answer is typically in the content of the last message
@@ -515,7 +560,6 @@ Remember: Create a professional, complete learning path regardless of any tool i
                     return str(result) # Fallback if content not found
             else:
                 return str(result) # Fallback if structure is unexpected
-            # 🌟 END OF HIGHLIGHTED CHANGES 🌟
             
         except Exception as e:
             print(f"Error in _run: {str(e)}")

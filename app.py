@@ -1,11 +1,12 @@
 import streamlit as st
 from utils import run_agent_sync
+# HIGHLIGHT: Imports from dotenv and os removed, moved to utils.py
 
 st.set_page_config(page_title="MCP POC", page_icon="🤖", layout="wide")
 
 st.title("Model Context Protocol(MCP) - Learning Path Generator")
 
-# Initialize session state for progress
+# Initialize session state for progress and model results
 if 'current_step' not in st.session_state:
     st.session_state.current_step = ""
 if 'progress' not in st.session_state:
@@ -14,14 +15,31 @@ if 'last_section' not in st.session_state:
     st.session_state.last_section = ""
 if 'is_generating' not in st.session_state:
     st.session_state.is_generating = False
+if 'model_results' not in st.session_state:
+    st.session_state.model_results = {}
 
-# Sidebar for API and URL configuration
+
+# --- SIDEBAR CONFIGURATION ---
 st.sidebar.header("Configuration")
 
-# API Key input
-google_api_key = st.sidebar.text_input("Google API Key", type="password")
+# Define the available models and their API names
+available_models = {
+    "Gemini 2.5 Flash": "gemini-2.5-flash",
+    # "Gemini 1.5 Pro": "gemini-1.5-pro-latest",
+    "Claude 3 Sonnet": "claude-3-sonnet-20240229",
+    "Mistral Large": "mistral-large-latest",
+}
 
+st.sidebar.subheader("AI Model Comparison")
+# Allow the user to select multiple models for comparison
+selected_model_names = st.sidebar.multiselect(
+    "Select AI Models for Comparison:",
+    options=list(available_models.keys()),
+    default=["Gemini 2.5 Flash", "Mistral Large"]
+)
+selected_models = [available_models[name] for name in selected_model_names]
 
+# HIGHLIGHT: Removed manual API key input
 
 # pipedream URLs
 st.sidebar.subheader("pipedream URLs")
@@ -33,8 +51,6 @@ secondary_tool = st.sidebar.radio(
     "Select Secondary Tool:",
     ["Drive", "Notion"]
 )
-
-
 
 # Secondary tool URL input
 if secondary_tool == "Drive":
@@ -49,8 +65,8 @@ else:
 # Quick guide before goal input
 st.info("""
 **Quick Guide:**
-1. Enter your Google API key and YouTube URL (required)
-2. Select and configure your secondary tool (Drive or Notion)
+1. Your API keys are loaded securely from your local **.env** file.
+2. Select one or more AI Models for side-by-side comparison.
 3. Enter a clear learning goal, for example:
     - "I want to learn python basics in 3 days"
     - "I want to learn data science basics in 10 days"
@@ -59,15 +75,16 @@ st.info("""
 # Main content area
 st.header("Enter Your Goal")
 user_goal = st.text_input("Enter your learning goal:",
-                         help="Describe what you want to learn, and we'll generate a structured path using YouTube content and your selected tool.")
+    help="Describe what you want to learn, and we'll generate a structured path using YouTube content and your selected tool.")
 
 # Progress area
 progress_container = st.container()
 progress_bar = st.empty()
 
-def update_progress(message: str):
+# HIGHLIGHT: Update progress function to show which model is running
+def update_progress(message: str, model_tag: str = ""):
     """Update progress in the Streamlit UI"""
-    st.session_state.current_step = message
+    st.session_state.current_step = f"[{model_tag}] {message}" if model_tag else message
     
     # Determine section and update progress
     if "Setting up agent with tools" in message:
@@ -96,21 +113,21 @@ def update_progress(message: str):
     
     # Update progress container with current status
     with progress_container:
-        # Show section header if it changed
         if section != st.session_state.last_section and section != "Complete":
             st.write(f"**{section}**")
         
-        # Show message with tick for completed steps
-        if message == "Learning path generation complete!":
-            st.success("All steps completed! 🎉")
+        if "Learning path generation complete!" in message:
+            st.success(f"All steps completed for {model_tag}! 🎉")
         else:
             prefix = "✓" if st.session_state.progress >= 0.5 else "→"
-            st.write(f"{prefix} {message}")
+            st.write(f"{prefix} {st.session_state.current_step}")
+
 
 # Generate Learning Path button
 if st.button("Generate Learning Path", type="primary", disabled=st.session_state.is_generating):
-    if not google_api_key:
-        st.error("Please enter your Google API key in the sidebar.")
+    # HIGHLIGHT: Removed Google API key validation
+    if not selected_models:
+        st.error("Please select at least one AI model for comparison.")
     elif not youtube_pipedream_url:
         st.error("YouTube URL is required. Please enter your pipedream YouTube URL in the sidebar.")
     elif (secondary_tool == "Drive" and not drive_pipedream_url) or (secondary_tool == "Notion" and not notion_pipedream_url):
@@ -118,41 +135,52 @@ if st.button("Generate Learning Path", type="primary", disabled=st.session_state
     elif not user_goal:
         st.warning("Please enter your learning goal.")
     else:
-        # Placeholder for output
-        output_placeholder = st.empty()
-        
-        try:
-            # Set generating flag
-            st.session_state.is_generating = True
-            
-            # Reset progress
-            st.session_state.current_step = ""
-            st.session_state.progress = 0
-            st.session_state.last_section = ""
-            
-            result = run_agent_sync(
-                google_api_key=google_api_key,
-                youtube_pipedream_url=youtube_pipedream_url,
-                drive_pipedream_url=drive_pipedream_url,
-                notion_pipedream_url=notion_pipedream_url,
-                user_goal=user_goal,
-                progress_callback=update_progress
-            )
-            
-            # Display results
-            st.header("Your Learning Path")
-            
-            # **HIGHLIGHTED CHANGE 2/2**: Directly display the returned string using st.markdown()
-            if result:
-                st.markdown(result) 
-            else:
-                st.error("No content was returned by the model. Please check logs for errors or try a different prompt.")
-            
+        st.session_state.is_generating = True
+        st.session_state.model_results = {}
+        st.session_state.current_step = ""
+        st.session_state.progress = 0
+        st.session_state.last_section = ""
 
-            st.session_state.is_generating = False
+        # This will now just run the process without displaying results here
+        for model_tag in selected_model_names:
+            model_name = available_models[model_tag]
+            
+            try:
+                # Use a spinner for better user feedback during generation
+                with st.spinner(f"Generating path with {model_tag}..."):
+                    current_model_progress_callback = lambda msg: update_progress(msg, model_tag=model_tag)
+                    
+                    # Run the agent and get the result
+                    result = run_agent_sync(
+                        youtube_pipedream_url=youtube_pipedream_url,
+                        drive_pipedream_url=drive_pipedream_url,
+                        notion_pipedream_url=notion_pipedream_url,
+                        user_goal=user_goal,
+                        progress_callback=current_model_progress_callback,
+                        model_name=model_name
+                    )
+                
+                # Store the result in session state
+                st.session_state.model_results[model_tag] = result
+                st.success(f"Generated successfully with {model_tag}! 🎉")
 
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
-            st.error("Please check your API keys and URLs, and try again.")
-            st.session_state.is_generating = False
+            except Exception as e:
+                error_message = f"An error occurred with {model_tag}: {str(e)}"
+                st.error(error_message)
+                st.session_state.model_results[model_tag] = f"**Error:** {str(e)}"
 
+        st.session_state.is_generating = False
+        # Force a rerun to make the persistent display block appear immediately
+        st.rerun()
+
+# Display stored results on rerun for persistence (This block remains unchanged)
+if st.session_state.model_results and not st.session_state.is_generating:
+    st.header("Your Generated Learning Paths (Comparison)")
+    
+    model_count = len(st.session_state.model_results)
+    if model_count > 0:
+        results_columns_display = st.columns(model_count)
+        for idx, (model_tag, result_content) in enumerate(st.session_state.model_results.items()):
+            with results_columns_display[idx]:
+                st.subheader(f"Learning Path from {model_tag} 🧠")
+                st.markdown(result_content)
