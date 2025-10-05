@@ -71,7 +71,6 @@ st.info("""
     - "I want to learn python basics in 3 days"
     - "I want to learn data science basics in 10 days"
 """)
-
 # Main content area
 st.header("Enter Your Goal")
 user_goal = st.text_input("Enter your learning goal:",
@@ -81,7 +80,7 @@ user_goal = st.text_input("Enter your learning goal:",
 progress_container = st.container()
 progress_bar = st.empty()
 
-# HIGHLIGHT: Update progress function to show which model is running
+# Update progress function to show which model is running
 def update_progress(message: str, model_tag: str = ""):
     """Update progress in the Streamlit UI"""
     st.session_state.current_step = f"[{model_tag}] {message}" if model_tag else message
