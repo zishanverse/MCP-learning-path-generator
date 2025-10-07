@@ -7,6 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint 
 from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
+from langchain_huggingface import HuggingFaceEndpoint
 import os
 from langchain_core.tools import BaseTool
 from typing import Optional, Tuple, Any, Callable, Dict, List
@@ -19,7 +20,7 @@ load_dotenv()
 
 cfg = RunnableConfig(recursion_limit=100)
 
-# ✅ HIGHLIGHT: Updated function to dynamically initialize any supported model
+#function to dynamically initialize any supported model
 def initialize_model(model_name: str) -> Any:
     if "gemini" in model_name:
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -27,7 +28,7 @@ def initialize_model(model_name: str) -> Any:
             raise ValueError("Google API key not found. Please set GOOGLE_API_KEY in your .env file.")
         return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
 
-    # ✅ Claude replacement → Hugging Face LLaMA
+    # Claude replacement → Hugging Face LLaMA
     elif "claude" in model_name or "llama" in model_name:
         hf_key = os.getenv("HF_API_KEY")
         if not hf_key:
@@ -43,7 +44,7 @@ def initialize_model(model_name: str) -> Any:
         
         # 2. Wrap it in a ChatHuggingFace object
         return ChatHuggingFace(llm=llm)
-    # ✅ Mistral via Hugging Face
+    # Mistral via Hugging Face
     elif "mistral" in model_name:
         hf_key = os.getenv("HF_API_KEY")
         if not hf_key:
@@ -58,6 +59,20 @@ def initialize_model(model_name: str) -> Any:
         
         # 2. Wrap it in a ChatHuggingFace object
         return ChatHuggingFace(llm=llm)
+
+    elif "perplexity" in model_name:
+        hf_key = os.getenv("HF_API_KEY")
+        if not hf_key:
+            raise ValueError("Hugging Face API key not found. Please set HF_API_KEY in your .env file.")
+            # Using Perplexity's model from Hugging Face
+            llm = HuggingFaceEndpoint(
+                repo_id="perplexity-ai/llama-3-8b-instruct",  # you can also try other Perplexity models
+                task="text-generation",
+                max_new_tokens=1024,
+                temperature=0.7,
+                huggingfacehub_api_token=hf_key
+            )
+
     else:
         raise ValueError(f"Unknown model: {model_name}")
 

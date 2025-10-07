@@ -28,6 +28,7 @@ available_models = {
     # "Gemini 1.5 Pro": "gemini-1.5-pro-latest",
     "Claude 3 Sonnet": "claude-3-sonnet-20240229",
     "Mistral Large": "mistral-large-latest",
+    "Perplexity": "perplexity-ai/llama-3-8b-instruct",
 }
 
 st.sidebar.subheader("AI Model Comparison")
