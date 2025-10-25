@@ -9,6 +9,9 @@ from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEndpoint
 import os
+import socket
+import urllib.parse
+import httpx
 from langchain_core.tools import BaseTool
 from typing import Optional, Tuple, Any, Callable, Dict, List
 import asyncio
@@ -400,55 +403,160 @@ For now, I'll continue with the learning path creation using general recommendat
 
 async def setup_agent_with_tools(
     # google_api_key: str,
-    youtube_pipedream_url: str,
-    drive_pipedream_url: Optional[str] = None,
-    notion_pipedream_url: Optional[str] = None,
+    use_youtube: bool = True,
+    use_drive: bool = False,
+    use_notion: bool = False,
     connected_account_id: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
     model_name: str = "gemini-2.5-flash"
 ) -> Any:
     """
-    Set up the agent with Composio-aware tools
+    Set up the agent with Composio hosted MCP server
     """
     try:
         if progress_callback:
-            progress_callback("Setting up agent with tools... ✅")
+            progress_callback("Setting up agent with Composio MCP... ✅")
         
-        # Initialize tools configuration
-        tools_config = {
-            "youtube": {
-                "url": youtube_pipedream_url,
-                "transport": "streamable_http"
+        # Get Composio API key from environment
+        composio_api_key = os.getenv("COMPOSIO_API_KEY")
+        if not composio_api_key:
+            raise ValueError("COMPOSIO_API_KEY not found in environment. Please set it in your .env file.")
+        
+        # Initialize tools configuration using Composio's hosted MCP server
+        tools_config = {}
+        
+        # Composio hosted MCP server URL (can be overridden)
+        # If you have your own MCP-compatible host or per-tool URLs, set the
+        # environment variable COMPOSIO_MCP_URL or per-tool overrides as shown below.
+        composio_mcp_url = os.getenv("COMPOSIO_MCP_URL", "https://mcp.composio.com")
+        
+        if use_youtube:
+            # Allow per-tool override for the YouTube tool URL (useful when you host
+            # the streamable/sse endpoint yourself). If not set, fall back to the
+            # MCP host defined in COMPOSIO_MCP_URL.
+            youtube_url = os.getenv("YOUTUBE_MCP_URL", composio_mcp_url)
+            tools_config["youtube"] = {
+                "url": youtube_url,
+                "transport": "streamable_http",
+                "headers": {
+                    "x-api-key": composio_api_key,
+                    "x-composio-app": "youtube"
+                }
             }
-        }
+            if progress_callback:
+                progress_callback("Added YouTube via Composio MCP... ✅")
 
-        if drive_pipedream_url:
+        if use_drive:
+            drive_url = os.getenv("DRIVE_MCP_URL", composio_mcp_url)
             tools_config["drive"] = {
-                "url": drive_pipedream_url,
-                "transport": "streamable_http"
+                "url": drive_url,
+                "transport": "streamable_http",
+                "headers": {
+                    "x-api-key": composio_api_key,
+                    "x-composio-app": "googledrive"
+                }
             }
             if progress_callback:
-                progress_callback("Added Google Drive integration... ✅")
+                progress_callback("Added Google Drive via Composio MCP... ✅")
 
-        if notion_pipedream_url:
+        if use_notion:
+            notion_url = os.getenv("NOTION_MCP_URL", composio_mcp_url)
             tools_config["notion"] = {
-                "url": notion_pipedream_url,
-                "transport": "streamable_http"
+                "url": notion_url,
+                "transport": "streamable_http",
+                "headers": {
+                    "x-api-key": composio_api_key,
+                    "x-composio-app": "notion"
+                }
             }
             if progress_callback:
-                progress_callback("Added Notion integration... ✅")
+                progress_callback("Added Notion via Composio MCP... ✅")
+
+        if not tools_config:
+            raise ValueError("At least one integration (YouTube, Drive, or Notion) must be enabled.")
 
         if progress_callback:
-            progress_callback("Initializing MCP client... ✅")
-        
-        # Initialize MCP client
-        mcp_client = MultiServerMCPClient(tools_config)
-        
-        if progress_callback:
-            progress_callback("Getting and processing tools... ✅")
-        
-        # Get original tools
-        original_tools = await mcp_client.get_tools()
+            progress_callback("Initializing Composio MCP client... ✅")
+
+        # Optionally bypass MCP discovery and call tool endpoints directly.
+        use_direct = os.getenv("USE_DIRECT_TOOLS", "false").lower() in ("1", "true", "yes")
+
+        # Helper: lightweight direct HTTP tool for calling streamable endpoints
+        class DirectHTTPTool:
+            def __init__(self, name: str, url: str, headers: Dict[str, str] = None, method: str = "POST"):
+                self.name = name
+                self.description = f"Direct HTTP tool proxy to {url}"
+                self.url = url
+                self.headers = headers or {}
+                self.method = method.upper()
+
+            async def ainvoke(self, params: Any = None):
+                # Send params as JSON for POST, or as query params for GET
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        if self.method == "GET":
+                            resp = await client.get(self.url, params=params or {}, headers=self.headers)
+                        else:
+                            # POST
+                            # If params is a dict, send JSON; otherwise send as text
+                            if isinstance(params, dict):
+                                resp = await client.post(self.url, json=params, headers=self.headers)
+                            else:
+                                resp = await client.post(self.url, content=str(params or ""), headers=self.headers)
+
+                        # Try to return JSON when possible
+                        ctype = resp.headers.get("content-type", "")
+                        if "application/json" in ctype.lower():
+                            return resp.json()
+                        # Otherwise return text
+                        return resp.text
+                except Exception as e:
+                    raise RuntimeError(f"Direct tool '{self.name}' request failed: {e}") from e
+
+        original_tools = []
+
+        if use_direct:
+            # Build direct tools from the tools_config map
+            for key, cfg_item in tools_config.items():
+                url = cfg_item.get("url")
+                headers = cfg_item.get("headers", {})
+                # Allow a method override via env var if needed
+                method = os.getenv(f"{key.upper()}_TOOL_METHOD", "POST")
+                original_tools.append(DirectHTTPTool(name=key, url=url, headers=headers, method=method))
+        else:
+            # Basic network/DNS check for the Composio MCP host to fail fast with a helpful message
+            try:
+                parsed = urllib.parse.urlparse(composio_mcp_url)
+                host = parsed.netloc or parsed.path
+                # Remove potential port
+                host = host.split(':')[0]
+                socket.getaddrinfo(host, None)
+            except Exception as dns_exc:
+                raise ConnectionError(
+                    f"Unable to resolve MCP host '{composio_mcp_url}'. "
+                    f"DNS/network check failed with: {dns_exc}.\n"
+                    "Please verify your internet connection, DNS settings, and that the MCP URL is correct. "
+                    "If you're behind a proxy, ensure environment variables (HTTP_PROXY/HTTPS_PROXY) are set.") from dns_exc
+
+            mcp_client = MultiServerMCPClient(tools_config)
+            
+            if progress_callback:
+                progress_callback("Getting and processing tools... ✅")
+
+            # Get original tools - wrap to provide clearer diagnostics on connection failures
+            try:
+                original_tools = await mcp_client.get_tools()
+            except Exception as conn_err:
+                # Common failure is DNS/connection (getaddrinfo/httpx.ConnectError)
+                msg = str(conn_err)
+                if 'getaddrinfo' in msg or 'gaierror' in msg:
+                    raise ConnectionError(
+                        "Network error while contacting the Composio MCP server: DNS lookup failed. "
+                        "Check the MCP URL, your network, and proxy settings.") from conn_err
+                else:
+                    # Re-raise with context for easier debugging
+                    raise ConnectionError(
+                        f"Failed to contact Composio MCP server at {composio_mcp_url}: {conn_err}") from conn_err
         
         print(f"Found {len(original_tools)} original tools")
         for i, tool in enumerate(original_tools):
@@ -498,24 +606,24 @@ async def setup_agent_with_tools(
 
 def run_agent_sync(
     # google_api_key: str,
-    youtube_pipedream_url: str,
-    drive_pipedream_url: Optional[str] = None,
-    notion_pipedream_url: Optional[str] = None,
+    use_youtube: bool = True,
+    use_drive: bool = False,
+    use_notion: bool = False,
     user_goal: str = "",
     connected_account_id: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
     model_name: str = "gemini-2.5-flash"
 ) -> str: # 🌟
     """
-    Synchronous wrapper for running the agent.
+    Synchronous wrapper for running the agent with Composio MCP.
     """
     async def _run():
         try:
             agent = await setup_agent_with_tools(
                 # google_api_key=google_api_key,
-                youtube_pipedream_url=youtube_pipedream_url,
-                drive_pipedream_url=drive_pipedream_url,
-                notion_pipedream_url=notion_pipedream_url,
+                use_youtube=use_youtube,
+                use_drive=use_drive,
+                use_notion=use_notion,
                 connected_account_id=connected_account_id,
                 progress_callback=progress_callback,
                 model_name=model_name

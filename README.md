@@ -14,8 +14,9 @@ This project is a Streamlit-based web application that generates personalized le
 ## Prerequisites
 
 - Python 3.10+
-- Google ai Studio API Key
-- pipedream URLs for integrations (YouTube and either Drive or Notion)
+- Google AI Studio API Key
+- Hugging Face API Key
+- **Composio API Key** (for direct MCP integration)
 
 ## Installation
 
@@ -30,12 +31,32 @@ pip install -r requirements.txt
 
 ## Configuration
 
-Before running the application, you'll need to set up:
+### 1. Create `.env` file
 
-1. Google API Key
-2. pipedream URLs for:
-   - YouTube (required)
-   - Google Drive or Notion (based on your preference)
+Copy `.env.example` to `.env` and add your API keys:
+
+```bash
+GOOGLE_API_KEY=your_google_ai_studio_key
+HF_API_KEY=your_huggingface_key
+COMPOSIO_API_KEY=your_composio_api_key
+```
+
+**Get API Keys:**
+- Google AI Studio: https://makersuite.google.com/app/apikey
+- Hugging Face: https://huggingface.co/settings/tokens
+- Composio: https://app.composio.dev/settings
+
+### 2. Connect Composio Integrations
+
+Connect the apps you want to use:
+
+```bash
+composio add youtube           # Required
+composio add googledrive       # Optional
+composio add notion            # Optional
+```
+
+**See `COMPOSIO_DIRECT_SETUP.md` for detailed setup instructions.**
 
 ## Running the Application
 
@@ -48,10 +69,15 @@ The application will be available at `http://localhost:8501` by default.
 
 ## Usage
 
-1. Enter your Google ai studio API key and pipedream URLs in the sidebar
-2. Select your preferred secondary tool (Drive or Notion)
-3. Enter your learning goal (e.g., "I want to learn python basics in 3 days")
-4. Click "Generate Learning Path" to create your personalized learning plan
+1. Ensure your `.env` file has all required API keys
+2. Make sure Composio integrations are connected (see Configuration above)
+3. In the Streamlit app sidebar:
+   - Select AI model(s) for comparison
+   - Choose secondary tool: None, Drive, or Notion
+4. Enter your learning goal (e.g., "I want to learn python basics in 3 days")
+5. Click "Generate Learning Path" to create your personalized learning plan
+
+**Note**: YouTube integration is always enabled. Drive and Notion are optional.
 
 ## Project Structure
 

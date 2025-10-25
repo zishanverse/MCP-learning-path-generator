@@ -42,35 +42,31 @@ selected_models = [available_models[name] for name in selected_model_names]
 
 # HIGHLIGHT: Removed manual API key input
 
-# pipedream URLs
-st.sidebar.subheader("pipedream URLs")
-youtube_pipedream_url = st.sidebar.text_input("YouTube URL (Required)", 
-    placeholder="Enter your pipedream YouTube URL")
+# Composio Integration Selection
+st.sidebar.subheader("Composio Integrations")
+st.sidebar.info("✅ Using Composio hosted MCP server (mcp.composio.com)")
 
 # Secondary tool selection
 secondary_tool = st.sidebar.radio(
     "Select Secondary Tool:",
-    ["Drive", "Notion"]
+    ["None", "Drive", "Notion"],
+    index=0
 )
 
-# Secondary tool URL input
-if secondary_tool == "Drive":
-    drive_pipedream_url = st.sidebar.text_input("Drive URL", 
-        placeholder="Enter your pipedream Drive URL")
-    notion_pipedream_url = None
-else:
-    notion_pipedream_url = st.sidebar.text_input("Notion URL", 
-        placeholder="Enter your pipedream Notion URL")
-    drive_pipedream_url = None
-
-# Quick guide before goal input
+# Set integration flags
+use_youtube = True  # Always enabled
+use_drive = (secondary_tool == "Drive")
+use_notion = (secondary_tool == "Notion")# Quick guide before goal input
 st.info("""
 **Quick Guide:**
-1. Your API keys are loaded securely from your local **.env** file.
+1. Your API keys (GOOGLE_API_KEY, HF_API_KEY, COMPOSIO_API_KEY) are loaded from your **.env** file.
 2. Select one or more AI Models for side-by-side comparison.
-3. Enter a clear learning goal, for example:
+3. Choose optional secondary tool (Drive or Notion) via Composio.
+4. Enter a clear learning goal, for example:
     - "I want to learn python basics in 3 days"
     - "I want to learn data science basics in 10 days"
+    
+**⚙️ Setup Required:** Make sure you've set up Composio integrations. See COMPOSIO_SETUP.md for details.
 """)
 # Main content area
 st.header("Enter Your Goal")
@@ -125,13 +121,18 @@ def update_progress(message: str, model_tag: str = ""):
 
 # Generate Learning Path button
 if st.button("Generate Learning Path", type="primary", disabled=st.session_state.is_generating):
-    # HIGHLIGHT: Removed Google API key validation
+    # Validate Composio API key is set
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    composio_api_key = os.getenv("COMPOSIO_API_KEY")
+    
     if not selected_models:
         st.error("Please select at least one AI model for comparison.")
-    elif not youtube_pipedream_url:
-        st.error("YouTube URL is required. Please enter your pipedream YouTube URL in the sidebar.")
-    elif (secondary_tool == "Drive" and not drive_pipedream_url) or (secondary_tool == "Notion" and not notion_pipedream_url):
-        st.error(f"Please enter your pipedream {secondary_tool} URL in the sidebar.")
+    elif not composio_api_key:
+        st.error("⚠️ COMPOSIO_API_KEY not found! Please set it in your .env file.")
+        st.info("💡 Create a .env file with: COMPOSIO_API_KEY=your_key_here")
     elif not user_goal:
         st.warning("Please enter your learning goal.")
     else:
@@ -150,11 +151,11 @@ if st.button("Generate Learning Path", type="primary", disabled=st.session_state
                 with st.spinner(f"Generating path with {model_tag}..."):
                     current_model_progress_callback = lambda msg: update_progress(msg, model_tag=model_tag)
                     
-                    # Run the agent and get the result
+                    # Run the agent with Composio hosted MCP
                     result = run_agent_sync(
-                        youtube_pipedream_url=youtube_pipedream_url,
-                        drive_pipedream_url=drive_pipedream_url,
-                        notion_pipedream_url=notion_pipedream_url,
+                        use_youtube=use_youtube,
+                        use_drive=use_drive,
+                        use_notion=use_notion,
                         user_goal=user_goal,
                         progress_callback=current_model_progress_callback,
                         model_name=model_name
