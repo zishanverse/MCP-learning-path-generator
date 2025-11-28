@@ -1,2 +1,7 @@
 venv/
 .env
+# OAuth client secrets and cached tokens
+client_secrets.json
+youtube_client_secrets.json
+tokens/
+secrets/
