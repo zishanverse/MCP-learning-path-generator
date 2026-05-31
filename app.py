@@ -1,18 +1,49 @@
+"""
+app.py — Multi-user Streamlit frontend for the Learning Path Generator.
+
+Architecture:
+  Login → Connect Integrations → Enter Goal → Generate → View Results
+
+The app strictly separates concerns:
+  - auth.py       handles session & login
+  - composio_client.py handles OAuth connection flow
+  - planner.py    handles LLM generation (structured JSON output)
+  - actions.py    handles YouTube/Drive/Notion writes using user's account
+  - db.py         persists user data, connections, and path history
+"""
+from __future__ import annotations
+
 import os
+
 import streamlit as st
 from dotenv import load_dotenv
-from utils import run_agent_sync
 
-try:
-    from scripts.get_youtube_token import obtain_youtube_token
-except Exception:
-    obtain_youtube_token = None
+import auth
+import composio_client as cc
+import db
+from actions import run_post_generation_actions
+from planner import generate as generate_path
+from schemas import learning_path_to_markdown
+from utils import extract_video_ids_from_text, filter_available_videos
 
 load_dotenv()
 
-st.set_page_config(page_title="MCP POC", page_icon="🤖", layout="wide")
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
 
-custom_css = """
+st.set_page_config(
+    page_title="Learning Path Generator",
+    page_icon="🧭",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ---------------------------------------------------------------------------
+# CSS
+# ---------------------------------------------------------------------------
+
+GLOBAL_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
 :root {
@@ -22,569 +53,455 @@ custom_css = """
     --accent: #a855f7;
     --accent-2: #22d3ee;
     --text-muted: #cbd5f5;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #eab308;
 }
 [data-testid="stAppViewContainer"] {
-    background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.15), transparent 35%),
-                radial-gradient(circle at 80% 0%, rgba(168,85,247,0.18), transparent 40%),
-                radial-gradient(circle at 0% 80%, rgba(34,211,238,0.18), transparent 45%),
+    background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 35%),
+                radial-gradient(circle at 80% 0%, rgba(168,85,247,0.15), transparent 40%),
+                radial-gradient(circle at 0% 80%, rgba(34,211,238,0.14), transparent 45%),
                 #050913;
     font-family: 'Manrope', sans-serif;
     color: #f8fafc;
 }
 [data-testid="stSidebar"] > div:first-child {
-    background: rgba(5, 8, 19, 0.85);
+    background: rgba(5, 8, 19, 0.9);
     backdrop-filter: blur(18px);
-    border-right: 1px solid rgba(148, 163, 184, 0.2);
+    border-right: 1px solid rgba(148, 163, 184, 0.18);
 }
+/* Hero */
 .hero-card {
-    position: relative;
-    overflow: hidden;
-    border-radius: 28px;
-    padding: 2.6rem;
-    margin-top: 1rem;
-    margin-bottom: 1.5rem;
-    background: linear-gradient(135deg, rgba(124,58,237,0.75), rgba(14,165,233,0.6));
-    box-shadow: 0 30px 80px rgba(15, 23, 42, 0.55);
+    border-radius: 24px;
+    padding: 2.2rem 2.4rem;
+    margin-bottom: 1.6rem;
+    background: linear-gradient(135deg, rgba(124,58,237,0.7), rgba(14,165,233,0.55));
+    box-shadow: 0 25px 70px rgba(15, 23, 42, 0.5);
     animation: float 14s ease-in-out infinite;
 }
-.hero-content {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2rem;
-    align-items: center;
-    position: relative;
-    z-index: 2;
-}
-.hero-text h1 {
-    font-size: 2.4rem;
-    margin-bottom: 0.5rem;
-}
-.hero-text p {
-    color: rgba(248, 250, 252, 0.9);
-    margin-bottom: 1rem;
-}
-.hero-badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-}
-.hero-badge {
-    background: rgba(15,23,42,0.35);
-    border: 1px solid rgba(248, 250, 252, 0.25);
-    padding: 0.35rem 0.9rem;
-    border-radius: 999px;
-    font-size: 0.9rem;
-    backdrop-filter: blur(6px);
-}
-.hero-badge.success {
-    border-color: rgba(34,197,94,0.4);
-    color: #bbf7d0;
-}
-.hero-badge.warn {
-    border-color: rgba(248,113,113,0.5);
-    color: #fecaca;
-}
-.sidebar-card {
-    background: rgba(15,23,42,0.55);
-    border: 1px solid rgba(148,163,184,0.25);
-    border-radius: 20px;
-    padding: 1.3rem 1.1rem;
-    margin-bottom: 1.1rem;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
-}
-.sidebar-card .card-title {
-    font-size: 1.05rem;
-    font-weight: 600;
-    margin-bottom: 0.35rem;
-}
-.sidebar-card .card-desc {
-    color: rgba(226,232,240,0.75);
-    font-size: 0.9rem;
-    margin-bottom: 0.8rem;
-}
-.sidebar-card [data-baseweb="select"] {
-    border-radius: 16px;
-    border: 1px solid rgba(148,163,184,0.45);
-    background: rgba(15,23,42,0.65);
-}
-.sidebar-card [data-baseweb="select"] div {
-    color: #f8fafc;
-}
-.model-pill-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-top: 0.8rem;
-}
-.model-pill {
-    padding: 0.2rem 0.75rem;
-    border-radius: 999px;
-    border: 1px solid rgba(148,163,184,0.4);
-    background: rgba(148,163,184,0.12);
-    font-size: 0.85rem;
-}
-.hero-visual {
-    position: relative;
-    width: 260px;
-    height: 260px;
-}
-.orb {
-    position: absolute;
-    width: 140px;
-    height: 140px;
-    border-radius: 50%;
-    filter: blur(0px);
-    opacity: 0.7;
-}
-.orb-one { background: radial-gradient(circle, #38bdf8, transparent 60%); top: 0; right: 10px; animation: pulse 6s infinite; }
-.orb-two { background: radial-gradient(circle, #c084fc, transparent 65%); bottom: 0; left: 0; animation: pulse 8s infinite; }
-.hero-stat {
-    position: absolute;
-    top: 52%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 170px;
-    height: 170px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 30% 30%, rgba(34,211,238,0.9), rgba(124,58,237,0.55));
-    border: 1px solid rgba(255,255,255,0.35);
-    box-shadow: 0 25px 50px rgba(14,165,233,0.35);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    color: #0f172a;
-    backdrop-filter: blur(10px);
-    animation: float 6s ease-in-out infinite;
-}
-.hero-stat-label {
-    font-size: 0.75rem;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: rgba(15, 23, 42, 0.7);
-    margin-bottom: 0.15rem;
-}
-.hero-stat-value {
-    font-size: 2.8rem;
-    font-weight: 600;
-    line-height: 1;
-}
-.hero-stat-sub {
-    font-size: 0.9rem;
-    color: rgba(15,23,42,0.75);
-}
+.hero-card h1 { font-size: 2.1rem; margin: 0 0 0.3rem 0; }
+.hero-card p  { color: rgba(248,250,252,0.88); margin: 0 0 1rem 0; font-size: 1rem; }
+/* Glass cards */
 .glass-card {
     background: var(--card-bg);
     border: 1px solid var(--card-border);
-    border-radius: 20px;
-    padding: 1.5rem;
-    backdrop-filter: blur(16px);
-    box-shadow: 0 25px 55px rgba(2,6,23,0.6);
-}
-.tip-card ul {
-    margin: 0;
-    padding-left: 1.1rem;
-    color: var(--text-muted);
-}
-.section-title {
-    margin-top: 2rem;
-    margin-bottom: 0.6rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    font-size: 0.95rem;
-    color: #94a3b8;
-}
-[data-testid="stChatMessage"] {
     border-radius: 18px;
-    border: 1px solid rgba(226, 232, 240, 0.15);
-    background: rgba(255,255,255,0.04);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
-    animation: fadeIn 0.45s ease;
+    padding: 1.4rem 1.6rem;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 20px 50px rgba(2,6,23,0.5);
+    margin-bottom: 1.2rem;
 }
-[data-testid="stChatInput"] textarea {
-    border-radius: 18px !important;
-    border: 1px solid rgba(148,163,184,0.4) !important;
-    background: rgba(15,23,42,0.6) !important;
-    color: #f8fafc !important;
-    min-height: 140px !important;
-    font-size: 1.05rem !important;
-    line-height: 1.5 !important;
-    padding: 1.15rem !important;
+/* Integration chips */
+.int-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.5rem; }
+.int-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.45rem 1rem; border-radius: 999px; font-size: 0.88rem;
+    font-weight: 600; border: 1px solid transparent;
 }
-.stButton button {
-    border-radius: 999px;
-    padding: 0.85rem 2.4rem;
-    background: linear-gradient(120deg, #7c3aed, #22d3ee);
-    border: none;
-    color: #fff;
-    font-weight: 600;
-    box-shadow: 0 15px 35px rgba(34,211,238,0.3);
-    animation: glow 6s ease-in-out infinite;
+.int-chip.connected {
+    background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.4); color: #86efac;
 }
-.stTabs [data-baseweb="tab-list"] {
-    justify-content: flex-start;
-    border-bottom: 1px solid rgba(148,163,184,0.25);
+.int-chip.disconnected {
+    background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.35); color: #fca5a5;
 }
-.stTabs [data-baseweb="tab-list"] button {
-    border-radius: 999px;
-    margin-right: 0.5rem;
-    color: #cbd5f5;
+/* Result chips */
+.result-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.55rem 1.1rem; border-radius: 999px; font-size: 0.9rem;
+    font-weight: 600; border: 1px solid rgba(34,211,238,0.45);
+    background: rgba(34,211,238,0.1); color: #e0f2fe;
+    text-decoration: none; transition: all 0.2s;
 }
-.stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
-    background: rgba(124,58,237,0.15);
-    border: 1px solid rgba(124,58,237,0.5);
-    color: #fff;
-}
+.result-chip:hover { border-color: rgba(124,58,237,0.55); background: rgba(124,58,237,0.18); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1rem 0; }
+/* Response block */
 .response-block {
-    background: rgba(15,23,42,0.55);
-    border: 1px solid rgba(148,163,184,0.25);
-    border-radius: 18px;
-    padding: 1.2rem 1.4rem;
-    margin-top: 0.6rem;
-    line-height: 1.65;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+    background: rgba(15,23,42,0.5); border: 1px solid rgba(148,163,184,0.2);
+    border-radius: 16px; padding: 1.2rem 1.4rem; line-height: 1.7;
 }
-.playlist-stack {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    margin-top: 1rem;
+/* Sidebar card */
+.sb-card {
+    background: rgba(15,23,42,0.5); border: 1px solid rgba(148,163,184,0.2);
+    border-radius: 16px; padding: 1.1rem; margin-bottom: 1rem;
 }
-.playlist-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.55rem 1rem;
-    border-radius: 999px;
-    border: 1px solid rgba(34,211,238,0.45);
-    background: rgba(34,211,238,0.12);
-    color: #e0f2fe;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 0.9rem;
-    transition: all 0.2s ease;
+/* Buttons */
+.stButton button {
+    border-radius: 999px; padding: 0.8rem 2rem;
+    background: linear-gradient(120deg, #7c3aed, #22d3ee);
+    border: none; color: #fff; font-weight: 600;
+    box-shadow: 0 12px 30px rgba(34,211,238,0.28);
 }
-.playlist-chip:hover {
-    border-color: rgba(124,58,237,0.6);
-    background: rgba(124,58,237,0.2);
+/* Section label */
+.section-label {
+    margin: 1.6rem 0 0.5rem;
+    text-transform: uppercase; letter-spacing: 0.15em;
+    font-size: 0.85rem; color: #94a3b8;
 }
-@keyframes float { 0%,100% { transform: translateY(0px);} 50% { transform: translateY(-6px);} }
-@keyframes pulse { 0% { transform: scale(1); opacity: 0.8;} 50% { transform: scale(1.2); opacity: 0.4;} 100% { transform: scale(1); opacity: 0.8;} }
-@keyframes spin { from { transform: translate(-50%, -50%) rotate(0deg);} to { transform: translate(-50%, -50%) rotate(360deg);} }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: translateY(0);} }
-@keyframes glow { 0% { box-shadow: 0 15px 35px rgba(34,211,238,0.35);} 50% { box-shadow: 0 25px 45px rgba(124,58,237,0.45);} 100% { box-shadow: 0 15px 35px rgba(34,211,238,0.35);} }
+@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+@keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
 </style>
 """
-st.markdown(custom_css, unsafe_allow_html=True)
+st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
-st.title("Model Context Protocol(MCP) - Learning Path Generator")
+# ---------------------------------------------------------------------------
+# Privacy policy route
+# ---------------------------------------------------------------------------
 
-# Quick privacy policy route: if ?privacy=1 is present, show the policy and exit
 params = st.query_params
 if params.get("privacy") or params.get("privacy_policy"):
-    # Load privacy policy from disk if present, otherwise show built-in text
     try:
         with open("PRIVACY.md", "r", encoding="utf-8") as fh:
-            md = fh.read()
-        st.markdown("# Privacy Policy\n" + md)
+            st.markdown("# Privacy Policy\n" + fh.read())
     except Exception:
         st.header("Privacy Policy")
-        st.write("This application collects only the minimum data required to operate (OAuth tokens for YouTube when you opt in). See repository README for details.")
-        st.write("For more information contact the application owner.")
+        st.write(
+            "This application connects to your Google/YouTube and Notion accounts through "
+            "Composio OAuth. No credentials are stored directly — only your Composio "
+            "connected account IDs are stored in a local database."
+        )
     st.stop()
 
-# Initialize session state for progress and model results
-if 'current_step' not in st.session_state:
-    st.session_state.current_step = ""
-if 'progress' not in st.session_state:
-    st.session_state.progress = 0
-if 'last_section' not in st.session_state:
-    st.session_state.last_section = ""
-if 'is_generating' not in st.session_state:
-    st.session_state.is_generating = False
-if 'model_results' not in st.session_state:
-    st.session_state.model_results = {}
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'pending_goal' not in st.session_state:
-    st.session_state.pending_goal = ""
+# ---------------------------------------------------------------------------
+# OAuth callback handling (query param: ?oauth_callback=provider&account_id=xxx)
+# ---------------------------------------------------------------------------
+
+def _handle_oauth_callback() -> None:
+    """Process Composio OAuth redirect if present in query params."""
+    provider = params.get("oauth_callback", "")
+    account_id = params.get("account_id", "") or params.get("connected_account_id", "")
+    if not provider or not account_id:
+        return
+    user = auth.get_current_user()
+    if not user:
+        return
+    try:
+        cc.handle_oauth_callback(user["id"], provider, account_id)
+        st.success(f"✅ {provider.title()} connected successfully!")
+        # Clear query params and rerun
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"Failed to save {provider} connection: {e}")
 
 
-# --- SIDEBAR CONFIGURATION ---
-st.sidebar.header("Configuration")
+# ---------------------------------------------------------------------------
+# Ensure DB is initialised on every cold start
+# ---------------------------------------------------------------------------
 
-# Define the available models and their API names
-available_models = {
-    "Gemini 2.5 Flash": "gemini-2.5-flash",
-    # "Gemini 1.5 Pro": "gemini-1.5-pro-latest",
-    "Claude 3 Sonnet": "claude-3-sonnet-20240229",
-    "Mistral Large": "mistral-large-latest",
-    "Perplexity": "perplexity-ai/llama-3-8b-instruct",
-}
+db.init_db()
 
-with st.sidebar.container():
-    st.markdown("<div class='sidebar-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>AI Model Comparison</div>", unsafe_allow_html=True)
-    st.markdown("<div class='card-desc'>Pick the brains you want to pit against each other.</div>", unsafe_allow_html=True)
-    selected_model_names = st.multiselect(
-        "Select AI Models for Comparison:",
+# ---------------------------------------------------------------------------
+# Auth gate — must be logged in to proceed
+# ---------------------------------------------------------------------------
+
+user = auth.require_login()
+user_id = user["id"]
+
+_handle_oauth_callback()
+
+# ---------------------------------------------------------------------------
+# Session state defaults
+# ---------------------------------------------------------------------------
+
+def _ss(key: str, default):
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+_ss("chat_history", [])
+_ss("pending_goal", "")
+_ss("generation_result", None)   # {'lp': LearningPath, 'markdown': str, 'actions': dict}
+_ss("is_generating", False)
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.markdown(f"### 👤 {user['name']}")
+    st.caption(user["email"])
+    if st.button("Sign out", key="signout_btn"):
+        auth.logout()
+        st.rerun()
+
+    st.divider()
+
+    # --- Model selection ---
+    st.markdown("<div class='sb-card'>", unsafe_allow_html=True)
+    st.markdown("**🧠 AI Model**")
+    available_models = {
+        "Gemini 2.5 Flash": "gemini-2.5-flash",
+        "Gemini 1.5 Pro": "gemini-1.5-pro-latest",
+    }
+    selected_model_label = st.selectbox(
+        "Select model",
         options=list(available_models.keys()),
-        default=["Gemini 2.5 Flash", "Mistral Large"],
-        key="model_compare_select"
+        key="model_select",
+        label_visibility="collapsed",
     )
-    if selected_model_names:
-        chips = "".join([f"<span class='model-pill'>{name}</span>" for name in selected_model_names])
-        st.markdown(f"<div class='model-pill-row'>{chips}</div>", unsafe_allow_html=True)
+    selected_model = available_models[selected_model_label]
     st.markdown("</div>", unsafe_allow_html=True)
 
-selected_models = [available_models[name] for name in selected_model_names]
+    st.divider()
 
-# HIGHLIGHT: Removed manual API key input
+    # --- Integrations ---
+    st.markdown("**🔗 Integrations**")
+    conn_status = cc.get_connection_status(user_id)
 
-# Composio Integration Selection
-st.sidebar.subheader("Composio Integrations")
-st.sidebar.caption("✅ Using Composio MCP (mcp.composio.com)")
+    PROVIDERS = [
+        ("youtube",     "YouTube",      "📺"),
+        ("googledrive", "Google Drive", "📄"),
+        ("notion",      "Notion",       "📝"),
+    ]
 
-# YouTube OAuth connection helper
-token_file_env = os.getenv("YOUTUBE_OAUTH_TOKEN_FILE", "tokens/youtube_token.json")
-token_file_path = os.path.abspath(os.path.expanduser(token_file_env))
-client_secrets_env = os.getenv("YOUTUBE_OAUTH_CLIENT_SECRETS_FILE", "youtube_client_secrets.json")
-client_secrets_path = os.path.abspath(os.path.expanduser(client_secrets_env))
-oauth_port = os.getenv("YOUTUBE_OAUTH_LOCAL_PORT", "8765")
-youtube_connected = os.path.exists(token_file_path)
+    for provider, label, icon in PROVIDERS:
+        connected = conn_status.get(provider, False)
+        chip_class = "connected" if connected else "disconnected"
+        status_text = "Connected" if connected else "Not connected"
+        st.markdown(
+            f"<div class='int-chip {chip_class}'>{icon} {label} — {status_text}</div>",
+            unsafe_allow_html=True,
+        )
+        cols = st.columns([1, 1])
+        if not connected:
+            with cols[0]:
+                if st.button(f"Connect {label}", key=f"connect_{provider}"):
+                    try:
+                        # Build redirect URL back to this app with oauth_callback param
+                        app_url = os.getenv("APP_URL", "http://localhost:8501")
+                        redirect = f"{app_url}?oauth_callback={provider}"
+                        oauth_url = cc.get_oauth_url(user_id, provider, redirect_url=redirect)
+                        st.markdown(
+                            f"<a href='{oauth_url}' target='_blank' "
+                            f"style='color:#22d3ee;text-decoration:underline;'>"
+                            f"Click here to authorise {label} →</a>",
+                            unsafe_allow_html=True,
+                        )
+                    except Exception as e:
+                        st.error(f"Could not start OAuth for {label}: {e}")
+        else:
+            with cols[0]:
+                if st.button(f"Disconnect", key=f"disconnect_{provider}"):
+                    cc.disconnect(user_id, provider)
+                    st.rerun()
+        st.markdown("<br>", unsafe_allow_html=True)
 
-if youtube_connected:
-    st.sidebar.success("YouTube OAuth connected ✅")
-else:
-    st.sidebar.warning("YouTube not connected. Connect to enable playlist creation.")
+    st.divider()
+    st.caption("Connect services once — future prompts run automatically.")
 
-connect_button_disabled = (obtain_youtube_token is None) or youtube_connected
-connect_button_label = "YouTube Connected" if youtube_connected else "Connect YouTube via OAuth"
-if st.sidebar.button(connect_button_label, disabled=connect_button_disabled):
-    if obtain_youtube_token is None:
-        st.sidebar.error("OAuth helper not available. Please run scripts/get_youtube_token.py manually.")
-    else:
-        try:
-            with st.spinner("Launching OAuth flow..."):
-                obtain_youtube_token(token_file=token_file_path, client_secrets=client_secrets_path, port=int(oauth_port))
-            st.sidebar.success("YouTube connected! Token saved.")
-            youtube_connected = True
-        except Exception as oauth_err:
-            st.sidebar.error(f"OAuth flow failed: {oauth_err}")
+# ---------------------------------------------------------------------------
+# Main area — Hero
+# ---------------------------------------------------------------------------
 
-# Secondary tool selection
-secondary_tool = st.sidebar.radio(
-    "Select Secondary Tool:",
-    ["None", "Drive", "Notion"],
-    index=0
-)
-st.sidebar.caption("Drive/Notion reuse your Composio connection when toggled.")
-
-# Set integration flags
-use_youtube = True  # Always enabled
-use_drive = (secondary_tool == "Drive")
-use_notion = (secondary_tool == "Notion")
-
-integration_label = secondary_tool if secondary_tool != "None" else "Core"
-youtube_badge = "YouTube linked" if youtube_connected else "Connect YouTube"
-recent_prompts = max(len(st.session_state.chat_history), 1)
-
-hero_html = f"""
-<div class="hero-card">
-    <div class="hero-content">
-        <div class="hero-text">
-            <p class="eyebrow">Context-aware learning journeys</p>
-            <h1>Learning Path Copilot</h1>
-            <p>Craft binge-worthy study plans, ready-to-share docs, and playlists of fresh videos—all from one prompt.</p>
-            <div class="hero-badges">
-                <span class="hero-badge">🧠 {len(selected_model_names)} models active</span>
-                <span class="hero-badge">🧩 {integration_label} tools</span>
-                <span class="hero-badge {'success' if youtube_connected else 'warn'}">{youtube_badge}</span>
-            </div>
-        </div>
-        <div class="hero-visual">
-            <div class="orb orb-one"></div>
-            <div class="orb orb-two"></div>
-            <div class="hero-stat">
-                <span class="hero-stat-label">Prompt count</span>
-                <span class="hero-stat-value">{recent_prompts}</span>
-                <span class="hero-stat-sub">today</span>
-            </div>
-        </div>
+st.markdown(
+    f"""
+    <div class="hero-card">
+        <h1>🧭 Learning Path Generator</h1>
+        <p>Craft binge-worthy study plans, YouTube playlists, and docs — all from one prompt.</p>
     </div>
-</div>
-"""
-st.markdown(hero_html, unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-tip_card = """
-<div class="glass-card tip-card">
-    <div class="tip-title" style="font-weight:600;margin-bottom:0.6rem;">Flow</div>
-    <ul>
-        <li>Pick the models you want to compare and toggle optional Drive/Notion syncing.</li>
-        <li>Describe a goal with the timeframe you have in mind—single prompt, conversation-style.</li>
-        <li>We handle doc creation & playlist curation automatically, surfacing links in the summary.</li>
-    </ul>
-</div>
-"""
-st.markdown(tip_card, unsafe_allow_html=True)
+# Connection status banner
+any_connected = any(conn_status.values())
+if not any_connected:
+    st.info(
+        "👈 Connect at least one integration in the sidebar to enable automatic playlist "
+        "and document creation. You can still generate a learning path without any integrations."
+    )
 
-st.markdown("<div class='section-title'>Goal Builder</div>", unsafe_allow_html=True)
-for message in st.session_state.chat_history[-6:]:
-    with st.chat_message(message.get("role", "user")):
-        st.markdown(message.get("content", ""))
+# ---------------------------------------------------------------------------
+# Goal builder chat
+# ---------------------------------------------------------------------------
 
-chat_prompt = st.chat_input("Describe what you want to learn (e.g., 3-day data science sprint)")
+st.markdown("<div class='section-label'>Goal Builder</div>", unsafe_allow_html=True)
+
+for msg in st.session_state.chat_history[-6:]:
+    with st.chat_message(msg.get("role", "user")):
+        st.markdown(msg.get("content", ""))
+
+chat_prompt = st.chat_input("Describe what you want to learn (e.g. 'Learn Python in 10 days')")
 if chat_prompt:
     st.session_state.chat_history.append({"role": "user", "content": chat_prompt})
     st.session_state.pending_goal = chat_prompt
+    st.session_state.generation_result = None
     st.rerun()
 
 user_goal = st.session_state.pending_goal.strip()
 
-# Progress area
-progress_container = st.container()
-progress_bar = st.empty()
+# ---------------------------------------------------------------------------
+# Generate button
+# ---------------------------------------------------------------------------
 
-# Update progress function to show which model is running
-def update_progress(message: str, model_tag: str = ""):
-    """Update progress in the Streamlit UI"""
-    st.session_state.current_step = f"[{model_tag}] {message}" if model_tag else message
-    
-    # Determine section and update progress
-    if "Setting up agent with tools" in message:
-        section = "Setup"
-        st.session_state.progress = 0.1
-    elif "Added Google Drive integration" in message or "Added Notion integration" in message:
-        section = "Integration"
-        st.session_state.progress = 0.2
-    elif "Creating AI agent" in message:
-        section = "Setup"
-        st.session_state.progress = 0.3
-    elif "Generating your learning path" in message:
-        section = "Generation"
-        st.session_state.progress = 0.5
-    elif "Learning path generation complete" in message:
-        section = "Complete"
-        st.session_state.progress = 1.0
+progress_placeholder = st.empty()
+status_placeholder = st.empty()
+
+if st.button(
+    "⚡ Generate Learning Path",
+    type="primary",
+    disabled=st.session_state.is_generating or not user_goal,
+    key="generate_btn",
+):
+    st.session_state.is_generating = True
+    st.session_state.generation_result = None
+    steps: list[str] = []
+
+    def _progress(msg: str) -> None:
+        steps.append(msg)
+        progress_placeholder.markdown(
+            "\n".join([f"- {s}" for s in steps[-5:]]),
+        )
+
+    try:
+        with st.spinner(f"Generating with {selected_model_label}…"):
+            # --- Planning layer ---
+            learning_path = generate_path(
+                user_goal=user_goal,
+                model_name=selected_model,
+                progress_callback=_progress,
+            )
+
+            _progress("Converting to markdown…")
+            markdown_text = learning_path_to_markdown(learning_path)
+
+            # --- Video validation ---
+            _progress("Extracting and validating YouTube video IDs…")
+            raw_ids = extract_video_ids_from_text(markdown_text)
+            if raw_ids:
+                valid_ids, invalid_ids = filter_available_videos(raw_ids)
+                if invalid_ids:
+                    _progress(f"Filtered {len(invalid_ids)} unavailable video(s).")
+            else:
+                valid_ids = []
+                _progress("No YouTube video IDs found in generated content.")
+
+            # --- Action layer ---
+            _progress("Running post-generation actions…")
+            action_results = run_post_generation_actions(
+                user_id=user_id,
+                goal=user_goal,
+                markdown=markdown_text,
+                video_ids=valid_ids,
+                connection_status=conn_status,
+            )
+
+            # --- Rebuild markdown with real URLs ---
+            playlist_url = None
+            doc_url = None
+            notion_url = None
+
+            if action_results.get("playlist", {}).get("success"):
+                playlist_url = action_results["playlist"]["playlist_url"]
+                _progress(f"Playlist created: {playlist_url}")
+
+            if action_results.get("google_doc", {}).get("success"):
+                doc_url = action_results["google_doc"]["doc_url"]
+                _progress(f"Google Doc created: {doc_url}")
+
+            if action_results.get("notion_page", {}).get("success"):
+                notion_url = action_results["notion_page"]["page_url"]
+                _progress(f"Notion page created: {notion_url}")
+
+            final_markdown = learning_path_to_markdown(
+                learning_path,
+                playlist_url=playlist_url,
+                doc_url=doc_url,
+                notion_url=notion_url,
+            )
+
+            # --- Persist to DB ---
+            db.save_learning_path(
+                user_id=user_id,
+                goal=user_goal,
+                playlist_url=playlist_url,
+                google_doc_url=doc_url,
+                notion_url=notion_url,
+            )
+
+            st.session_state.generation_result = {
+                "lp": learning_path,
+                "markdown": final_markdown,
+                "actions": action_results,
+                "playlist_url": playlist_url,
+                "doc_url": doc_url,
+                "notion_url": notion_url,
+            }
+            _progress("✅ All done!")
+
+    except Exception as e:
+        st.error(f"Generation failed: {e}")
+        import traceback
+        with st.expander("Error details"):
+            st.code(traceback.format_exc())
+    finally:
         st.session_state.is_generating = False
-    else:
-        section = st.session_state.last_section or "Progress"
-    
-    st.session_state.last_section = section
-    
-    # Show progress bar
-    progress_bar.progress(st.session_state.progress)
-    
-    # Update progress container with current status
-    with progress_container:
-        if section != st.session_state.last_section and section != "Complete":
-            st.write(f"**{section}**")
-        
-        if "Learning path generation complete!" in message:
-            st.success(f"All steps completed for {model_tag}! 🎉")
-        else:
-            prefix = "✓" if st.session_state.progress >= 0.5 else "→"
-            st.write(f"{prefix} {st.session_state.current_step}")
-
-
-# Generate Learning Path button
-if st.button("Generate Learning Path", type="primary", disabled=st.session_state.is_generating):
-    # Validate Composio API key is set
-    composio_api_key = os.getenv("COMPOSIO_API_KEY")
-    
-    if not selected_models:
-        st.error("Please select at least one AI model for comparison.")
-    elif not composio_api_key:
-        st.error("⚠️ COMPOSIO_API_KEY not found! Please set it in your .env file.")
-        st.info("💡 Create a .env file with: COMPOSIO_API_KEY=your_key_here")
-    elif not user_goal:
-        st.warning("Please enter your learning goal.")
-    else:
-        st.session_state.is_generating = True
-        st.session_state.model_results = {}
-        st.session_state.current_step = ""
-        st.session_state.progress = 0
-        st.session_state.last_section = ""
-
-        # This will now just run the process without displaying results here
-        for model_tag in selected_model_names:
-            model_name = available_models[model_tag]
-            
-            try:
-                # Use a spinner for better user feedback during generation
-                with st.spinner(f"Generating path with {model_tag}..."):
-                    current_model_progress_callback = lambda msg: update_progress(msg, model_tag=model_tag)
-                    
-                    # Run the agent with Composio hosted MCP
-                    result = run_agent_sync(
-                        use_youtube=use_youtube,
-                        use_drive=use_drive,
-                        use_notion=use_notion,
-                        user_goal=user_goal,
-                        progress_callback=current_model_progress_callback,
-                        model_name=model_name
-                    )
-                
-                # Store the result in session state
-                st.session_state.model_results[model_tag] = result
-                st.success(f"Generated successfully with {model_tag}! 🎉")
-
-            except Exception as e:
-                error_message = f"An error occurred with {model_tag}: {str(e)}"
-                st.error(error_message)
-                st.session_state.model_results[model_tag] = f"**Error:** {str(e)}"
-
-        st.session_state.is_generating = False
-        # Force a rerun to make the persistent display block appear immediately
+        progress_placeholder.empty()
         st.rerun()
 
-# Display stored results on rerun for persistence (This block remains unchanged)
-if st.session_state.model_results and not st.session_state.is_generating:
-    st.markdown("<div class='section-title'>Your Learning Paths</div>", unsafe_allow_html=True)
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    tabs = st.tabs(list(st.session_state.model_results.keys()))
-    for tab, (model_tag, result_content) in zip(tabs, st.session_state.model_results.items()):
-        with tab:
-            st.subheader(f"Learning Path from {model_tag} 🧠")
-            if isinstance(result_content, dict):
-                text = result_content.get("text", "")
-                if text:
-                    st.markdown("<div class='response-block'>", unsafe_allow_html=True)
-                    st.markdown(text)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                playlists = result_content.get("playlists", [])
-                playlist_links = []
-                if playlists:
-                    for evt in playlists:
-                        pid = evt.get("playlist_id")
-                        if pid:
-                            url = f"https://www.youtube.com/playlist?list={pid}"
-                            playlist_links.append(url)
-                if playlist_links:
-                    unique_links = list(dict.fromkeys(playlist_links))
-                    chips = "".join([
-                        f"<a class='playlist-chip' href='{url}' target='_blank' rel='noopener noreferrer'>🎧 Playlist {idx+1}</a>"
-                        for idx, url in enumerate(unique_links)
-                    ])
-                    st.markdown(f"<div class='playlist-stack'>{chips}</div>", unsafe_allow_html=True)
-                if playlists:
-                    with st.expander("Playlist actions (created/added/failed)"):
-                        for p in playlists:
-                            action = p.get("action")
-                            pid = p.get("playlist_id") or p.get("raw")
-                            if action == "created_and_added":
-                                st.write(f"Created playlist {pid} and added {len(p.get('added', []))} videos")
-                            elif action == "auto_added_to_existing":
-                                st.write(f"Auto-added to existing playlist {pid}: added={p.get('added', [])} failed={p.get('failed', [])}")
-                            elif action == "added_missing":
-                                st.write(f"Added missing videos to {pid}: added={p.get('added', [])} failed={p.get('failed', [])}")
-                            elif action == "create_failed":
-                                st.error(f"Failed to create playlist for reference {pid}: {p.get('error')}")
-                            else:
-                                st.write(p)
-            else:
-                st.markdown("<div class='response-block'>", unsafe_allow_html=True)
-                st.markdown(result_content)
-                st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+# ---------------------------------------------------------------------------
+# Results display
+# ---------------------------------------------------------------------------
+
+result = st.session_state.generation_result
+if result:
+    st.markdown("<div class='section-label'>Your Learning Path</div>", unsafe_allow_html=True)
+
+    # Action result chips
+    chip_html = ""
+    if result.get("playlist_url"):
+        chip_html += (
+            f"<a class='result-chip' href='{result['playlist_url']}' target='_blank'>"
+            f"🎧 YouTube Playlist</a>"
+        )
+    if result.get("doc_url"):
+        chip_html += (
+            f"<a class='result-chip' href='{result['doc_url']}' target='_blank'>"
+            f"📄 Google Doc</a>"
+        )
+    if result.get("notion_url"):
+        chip_html += (
+            f"<a class='result-chip' href='{result['notion_url']}' target='_blank'>"
+            f"📝 Notion Page</a>"
+        )
+    if chip_html:
+        st.markdown(f"<div class='chip-row'>{chip_html}</div>", unsafe_allow_html=True)
+
+    # Show action errors (non-fatal)
+    actions = result.get("actions", {})
+    for key, label in [("playlist", "YouTube Playlist"), ("google_doc", "Google Doc"), ("notion_page", "Notion Page")]:
+        action = actions.get(key)
+        if action and not action.get("success") and action.get("error"):
+            st.warning(f"⚠️ {label}: {action['error']}")
+
+    # Learning path content
+    with st.container():
+        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='response-block'>", unsafe_allow_html=True)
+        st.markdown(result["markdown"])
+        st.markdown("</div></div>", unsafe_allow_html=True)
+
+    # Download button
+    st.download_button(
+        label="⬇️ Download Markdown",
+        data=result["markdown"],
+        file_name="learning_path.md",
+        mime="text/markdown",
+        key="download_md",
+    )
+
+# ---------------------------------------------------------------------------
+# History panel
+# ---------------------------------------------------------------------------
+
+recent_paths = db.get_user_paths(user_id, limit=5)
+if recent_paths:
+    with st.expander("📋 Recent Learning Paths"):
+        for path in recent_paths:
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
+                st.write(path["goal"])
+            with col2:
+                if path.get("playlist_url"):
+                    st.markdown(f"[Playlist]({path['playlist_url']})")
+            with col3:
+                st.caption(path["created_at"][:10])

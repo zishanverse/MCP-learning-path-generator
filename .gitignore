@@ -5,3 +5,7 @@ client_secrets.json
 youtube_client_secrets.json
 tokens/
 secrets/
+context/
+*.db
+.venv/
+__pycache__/
