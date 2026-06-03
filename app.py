@@ -629,11 +629,18 @@ recent_paths = db.get_user_paths(user_id, limit=5)
 if recent_paths:
     with st.expander("📋 Recent Learning Paths"):
         for path in recent_paths:
-            col1, col2, col3 = st.columns([3, 1, 1])
+            col1, col2, col3 = st.columns([3, 2, 1])
             with col1:
                 st.write(path["goal"])
             with col2:
+                links = []
                 if path.get("playlist_url"):
-                    st.markdown(f"[Playlist]({path['playlist_url']})")
+                    links.append(f"[Playlist]({path['playlist_url']})")
+                if path.get("google_doc_url"):
+                    links.append(f"[Doc]({path['google_doc_url']})")
+                if path.get("notion_url"):
+                    links.append(f"[Notion]({path['notion_url']})")
+                if links:
+                    st.markdown(" | ".join(links))
             with col3:
                 st.caption(path["created_at"][:10])
