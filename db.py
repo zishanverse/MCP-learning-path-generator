@@ -71,6 +71,9 @@ class OAuthConnection(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     provider = Column(String, nullable=False)
     connected_account_id = Column(String, nullable=False)
+    # For Notion: UUID of the page/database to create pages inside.
+    # The Notion API does not allow root-level page creation.
+    notion_parent_page_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=_now, nullable=False)
 
 class LearningPathRecord(Base):
@@ -103,6 +106,15 @@ class LearningPathRecord(Base):
 def init_db() -> None:
     """Create all tables if they don't already exist."""
     Base.metadata.create_all(bind=engine)
+    # Migration: add notion_parent_page_id column to existing databases
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE oauth_connections ADD COLUMN notion_parent_page_id VARCHAR"
+            ))
+            conn.commit()
+    except Exception:
+        pass  # Column already exists — safe to ignore
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +194,29 @@ def delete_connection(user_id: int, provider: str) -> None:
             OAuthConnection.provider == provider
         ).delete()
         session.commit()
+
+
+def save_notion_parent_id(user_id: int, page_id: str) -> None:
+    """Persist the Notion parent page/database UUID for a user."""
+    page_id = page_id.strip()
+    with SessionLocal() as session:
+        conn = session.query(OAuthConnection).filter(
+            OAuthConnection.user_id == user_id,
+            OAuthConnection.provider == "notion"
+        ).first()
+        if conn:
+            conn.notion_parent_page_id = page_id or None
+            session.commit()
+
+
+def get_notion_parent_id(user_id: int) -> Optional[str]:
+    """Return the stored Notion parent page/database UUID for a user, or None."""
+    with SessionLocal() as session:
+        conn = session.query(OAuthConnection).filter(
+            OAuthConnection.user_id == user_id,
+            OAuthConnection.provider == "notion"
+        ).first()
+        return conn.notion_parent_page_id if conn else None
 
 
 # ---------------------------------------------------------------------------

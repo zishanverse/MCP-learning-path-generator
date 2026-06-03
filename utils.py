@@ -128,7 +128,7 @@ def search_youtube_for_title(
     exclude_ids: Optional[Set[str]] = None
 ) -> Optional[str]:
     """Search YouTube for a title and return the best video ID or None."""
-    if not _bool_env("ENABLE_YOUTUBE_TITLE_LOOKUP", False):
+    if not _bool_env("ENABLE_YOUTUBE_TITLE_LOOKUP", True):
         return None
     try:
         youtube = _build_public_youtube_client()
@@ -256,6 +256,51 @@ def extract_video_ids_from_text(
                 break
             vid = search_youtube_for_title(title, exclude_ids=seen)
             _record(_normalize_video_id(vid) if vid else None)
+
+    return ids
+
+
+def extract_video_ids_from_learning_path(
+    lp: "LearningPath",
+    fetch_generic_urls: bool = True,
+    max_fetches: int = 5
+) -> List[str]:
+    """Extract YouTube video IDs directly from the LearningPath object,
+    using URL parsing first and falling back to YouTube title search.
+    """
+    ids: List[str] = []
+    seen: Set[str] = set()
+
+    def _record(video_id: Optional[str]):
+        if video_id and video_id not in seen:
+            seen.add(video_id)
+            ids.append(video_id)
+
+    # First pass: try to extract from URLs
+    for day in lp.days:
+        for r in day.resources:
+            if r.type == "Video" and ("youtube" in r.url.lower() or "youtu.be" in r.url.lower()):
+                # Extract directly from URL string using the text extractor logic
+                extracted = extract_video_ids_from_text(
+                    r.url, fetch_generic_urls=fetch_generic_urls, max_fetches=max_fetches
+                )
+                
+                valid_id = None
+                if extracted:
+                    valid_id = extracted[0]
+                    for eid in extracted:
+                        _record(eid)
+                
+                # If we couldn't extract an ID from the URL (e.g. placeholder), search by title
+                if not valid_id and r.title:
+                    vid = search_youtube_for_title(r.title, exclude_ids=seen)
+                    if vid:
+                        valid_id = _normalize_video_id(vid)
+                        _record(valid_id)
+                
+                # Update the resource URL in the learning path object
+                if valid_id:
+                    r.url = f"https://www.youtube.com/watch?v={valid_id}"
 
     return ids
 

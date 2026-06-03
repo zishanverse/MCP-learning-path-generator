@@ -38,7 +38,7 @@ importlib.reload(utils)
 from actions import run_post_generation_actions
 from planner import generate as generate_path
 from schemas import learning_path_to_markdown
-from utils import extract_video_ids_from_text, filter_available_videos
+from utils import extract_video_ids_from_text, filter_available_videos, extract_video_ids_from_learning_path
 
 load_dotenv()
 
@@ -360,6 +360,17 @@ with st.sidebar:
                 if st.button(f"Disconnect", key=f"disconnect_{provider}"):
                     cc.disconnect(user_id, provider)
                     st.rerun()
+            
+            if provider == "notion":
+                current_parent_id = db.get_notion_parent_id(user_id) or ""
+                new_parent_id = st.text_input(
+                    "Parent Page ID",
+                    value=current_parent_id,
+                    key="notion_parent_id_input",
+                    help="Open any Notion page in your browser and copy the 32-character ID from the URL. This is required because Notion does not allow creating pages at the root level."
+                )
+                if new_parent_id != current_parent_id:
+                    db.save_notion_parent_id(user_id, new_parent_id)
         st.markdown("<br>", unsafe_allow_html=True)
 
     st.divider()
@@ -459,12 +470,9 @@ if st.button(
                 progress_callback=_progress,
             )
 
-            _progress("Converting to markdown…")
-            markdown_text = learning_path_to_markdown(learning_path)
-
             # --- Video validation ---
             _progress("Extracting and validating YouTube video IDs…")
-            raw_ids = extract_video_ids_from_text(markdown_text)
+            raw_ids = extract_video_ids_from_learning_path(learning_path)
             if raw_ids:
                 valid_ids, invalid_ids = filter_available_videos(raw_ids)
                 if invalid_ids:
@@ -472,6 +480,10 @@ if st.button(
             else:
                 valid_ids = []
                 _progress("No YouTube video IDs found in generated content.")
+
+            # --- Generate Markdown with updated URLs ---
+            _progress("Converting to markdown…")
+            markdown_text = learning_path_to_markdown(learning_path)
 
             # --- Action layer ---
             _progress("Running post-generation actions…")

@@ -21,6 +21,7 @@ import re
 from typing import Optional
 
 import composio_client as cc
+import db
 
 # ---------------------------------------------------------------------------
 # YouTube actions
@@ -217,6 +218,7 @@ def create_google_doc(
             params={
                 "file_name": title,
                 "text_content": markdown_content,
+                "mimeType": "application/vnd.google-apps.document"
             },
         )
         doc_id, err = _parse_composio_response(resp, "googledrive")
@@ -281,8 +283,15 @@ def create_notion_page(
     create_params: dict = {
         "title": title,
     }
+    
+    if not parent_page_id:
+        parent_page_id = db.get_notion_parent_id(user_id)
+        
     if parent_page_id:
         create_params["parent_id"] = parent_page_id
+    else:
+        result["error"] = "Notion parent page ID is not set. Please set it in the Integrations panel."
+        return result
 
     try:
         resp = cc.execute_tool(
