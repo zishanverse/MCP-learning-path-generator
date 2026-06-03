@@ -9,3 +9,4 @@ context/
 *.db
 .venv/
 __pycache__/
+scripts/

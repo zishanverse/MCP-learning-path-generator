@@ -19,6 +19,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -121,6 +128,8 @@ def search_youtube_for_title(
     exclude_ids: Optional[Set[str]] = None
 ) -> Optional[str]:
     """Search YouTube for a title and return the best video ID or None."""
+    if not _bool_env("ENABLE_YOUTUBE_TITLE_LOOKUP", False):
+        return None
     try:
         youtube = _build_public_youtube_client()
         exclude = set(exclude_ids or [])
@@ -261,6 +270,9 @@ def filter_available_videos(video_ids: List[str]) -> Tuple[List[str], List[str]]
         if vid and vid not in seen:
             seen.add(vid)
             deduped.append(vid)
+    if not _bool_env("ENABLE_YOUTUBE_AVAILABILITY_CHECK", False):
+        return deduped, []
+
     try:
         youtube = _build_public_youtube_client()
         available: List[str] = []

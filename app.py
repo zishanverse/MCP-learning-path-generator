@@ -18,9 +18,23 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
+import importlib
 import auth
 import composio_client as cc
 import db
+import actions
+import planner
+import schemas
+import utils
+
+importlib.reload(auth)
+importlib.reload(cc)
+importlib.reload(db)
+importlib.reload(actions)
+importlib.reload(planner)
+importlib.reload(schemas)
+importlib.reload(utils)
+
 from actions import run_post_generation_actions
 from planner import generate as generate_path
 from schemas import learning_path_to_markdown
@@ -137,8 +151,67 @@ GLOBAL_CSS = """
     text-transform: uppercase; letter-spacing: 0.15em;
     font-size: 0.85rem; color: #94a3b8;
 }
+.status-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.9rem;
+    margin-bottom: 1.2rem;
+}
+.status-tile {
+    background: rgba(15,23,42,0.55);
+    border: 1px solid rgba(148,163,184,0.2);
+    border-radius: 16px;
+    padding: 0.95rem 1rem;
+    box-shadow: 0 18px 35px rgba(2,6,23,0.35);
+}
+.status-tile .label {
+    display: block;
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin-bottom: 0.35rem;
+}
+.status-tile .value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #f8fafc;
+}
 @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
 @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+
+@media (max-width: 900px) {
+    .status-strip {
+        grid-template-columns: 1fr;
+    }
+    .hero-card {
+        padding: 1.5rem 1.3rem;
+    }
+    .hero-card h1 {
+        font-size: 1.7rem;
+    }
+    .glass-card,
+    .sb-card {
+        padding: 1rem;
+    }
+}
+
+@media (max-width: 640px) {
+    [data-testid="stAppViewContainer"] {
+        font-size: 0.96rem;
+    }
+    .stButton button {
+        width: 100%;
+        padding: 0.8rem 1rem;
+    }
+    .chip-row {
+        flex-direction: column;
+    }
+    .result-chip {
+        width: 100%;
+        justify-content: center;
+    }
+}
 </style>
 """
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
@@ -276,6 +349,10 @@ with st.sidebar:
                             f"Click here to authorise {label} →</a>",
                             unsafe_allow_html=True,
                         )
+                        if provider == "googledrive":
+                            st.caption("⚠️ Note: Make sure to check the box for full Google Drive file write access on the Google permission page.")
+                        elif provider == "notion":
+                            st.caption("⚠️ Note: Make sure to select all pages you want the generator to access on the Notion permission page.")
                     except Exception as e:
                         st.error(f"Could not start OAuth for {label}: {e}")
         else:
@@ -297,6 +374,27 @@ st.markdown(
     <div class="hero-card">
         <h1>🧭 Learning Path Generator</h1>
         <p>Craft binge-worthy study plans, YouTube playlists, and docs — all from one prompt.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+connected_count = sum(1 for value in conn_status.values() if value)
+st.markdown(
+    f"""
+    <div class="status-strip">
+        <div class="status-tile">
+            <span class="label">Integrations</span>
+            <div class="value">{connected_count}/3 connected</div>
+        </div>
+        <div class="status-tile">
+            <span class="label">Output</span>
+            <div class="value">Structured plan + exports</div>
+        </div>
+        <div class="status-tile">
+            <span class="label">Execution</span>
+            <div class="value">Composio-hosted tools</div>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -390,16 +488,20 @@ if st.button(
             doc_url = None
             notion_url = None
 
-            if action_results.get("playlist", {}).get("success"):
-                playlist_url = action_results["playlist"]["playlist_url"]
+            def _action_success(name: str) -> bool:
+                action = action_results.get(name) or {}
+                return bool(action.get("success"))
+
+            if _action_success("playlist"):
+                playlist_url = (action_results.get("playlist") or {}).get("playlist_url")
                 _progress(f"Playlist created: {playlist_url}")
 
-            if action_results.get("google_doc", {}).get("success"):
-                doc_url = action_results["google_doc"]["doc_url"]
+            if _action_success("google_doc"):
+                doc_url = (action_results.get("google_doc") or {}).get("doc_url")
                 _progress(f"Google Doc created: {doc_url}")
 
-            if action_results.get("notion_page", {}).get("success"):
-                notion_url = action_results["notion_page"]["page_url"]
+            if _action_success("notion_page"):
+                notion_url = (action_results.get("notion_page") or {}).get("page_url")
                 _progress(f"Notion page created: {notion_url}")
 
             final_markdown = learning_path_to_markdown(
@@ -471,7 +573,25 @@ if result:
     for key, label in [("playlist", "YouTube Playlist"), ("google_doc", "Google Doc"), ("notion_page", "Notion Page")]:
         action = actions.get(key)
         if action and not action.get("success") and action.get("error"):
-            st.warning(f"⚠️ {label}: {action['error']}")
+            err_msg = action["error"]
+            if "insufficient authentication scopes" in err_msg.lower() or "permission" in err_msg.lower() or "forbidden" in err_msg.lower() or "scope" in err_msg.lower():
+                if key == "google_doc":
+                    st.error(
+                        f"🔴 **Google Doc Integration Error**: Insufficient Permissions.\n\n"
+                        f"To fix this, please **Disconnect Google Drive** in the sidebar and click **Connect Google Drive** again. "
+                        f"When Google displays the OAuth consent screen, **you MUST check the box** that says "
+                        f"\"See, edit, create, and delete all your Google Drive files\" to allow the generator to save documents."
+                    )
+                elif key == "notion_page":
+                    st.error(
+                        f"🔴 **Notion Integration Error**: Insufficient Access.\n\n"
+                        f"To fix this, please **Disconnect Notion** in the sidebar and click **Connect Notion** again. "
+                        f"Make sure to select the workspace and pages you want the generator to access during Notion's OAuth authorization flow."
+                    )
+                else:
+                    st.error(f"🔴 **{label} Error**: {err_msg}")
+            else:
+                st.warning(f"⚠️ {label}: {err_msg}")
 
     # Learning path content
     with st.container():

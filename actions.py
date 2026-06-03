@@ -71,15 +71,9 @@ def create_youtube_playlist(
                 "privacyStatus": "public",
             },
         )
-        # Composio returns the created playlist data in response data
-        data = resp.get("response", {}) or resp.get("data", {}) or resp
-        playlist_id = (
-            data.get("id")
-            or (data.get("snippet", {}) or {}).get("id")
-            or _extract_id_from_response(resp)
-        )
-        if not playlist_id:
-            result["error"] = f"Playlist created but no ID found in response: {str(resp)[:300]}"
+        playlist_id, err = _parse_composio_response(resp, "youtube")
+        if err:
+            result["error"] = err
             return result
 
         result["playlist_id"] = playlist_id
@@ -120,6 +114,70 @@ def _extract_id_from_response(resp: dict) -> Optional[str]:
     return None
 
 
+def _parse_composio_response(resp: dict, provider: str) -> tuple[Optional[str], Optional[str]]:
+    """Parse a Composio execution response and return (resource_id, error_message)."""
+    if not isinstance(resp, dict):
+        return None, f"Invalid response format: {resp}"
+
+    # Check top-level success if present
+    is_successful = resp.get("successful")
+    if is_successful is None:
+        is_successful = resp.get("success")
+    if is_successful is False:
+        return None, resp.get("error") or resp.get("message") or f"Action failed: {resp}"
+
+    # Extract data block
+    data = None
+    for key in ["response", "data"]:
+        val = resp.get(key)
+        if isinstance(val, dict):
+            data = val
+            break
+
+    if data is None:
+        data = resp
+
+    # Check for error fields inside the data block
+    error_msg = None
+    if isinstance(data, dict):
+        if "error" in data:
+            error_msg = str(data["error"])
+        elif "message" in data:
+            error_msg = str(data["message"])
+        elif "detail" in data:
+            error_msg = str(data["detail"])
+
+    # Resolve resource ID based on provider
+    resource_id = None
+    if isinstance(data, dict):
+        resource_id = data.get("id")
+        if not resource_id and provider == "youtube":
+            snippet = data.get("snippet", {})
+            if isinstance(snippet, dict):
+                resource_id = snippet.get("id")
+
+    # Fallback to regex extraction if not found directly
+    if not resource_id:
+        if provider == "youtube":
+            resource_id = _extract_id_from_response(resp)
+        elif provider == "googledrive":
+            resource_id = _extract_drive_id(resp)
+        elif provider == "notion":
+            resource_id = _extract_notion_id(resp)
+
+    # If we have an error message and no resource_id was resolved, return the error
+    if error_msg and not resource_id:
+        return None, error_msg
+
+    # If no ID was resolved and we have no explicit error, return failure
+    if not resource_id:
+        if error_msg:
+            return None, error_msg
+        return None, f"No resource ID found in response: {str(resp)[:300]}"
+
+    return resource_id, None
+
+
 # ---------------------------------------------------------------------------
 # Google Drive actions
 # ---------------------------------------------------------------------------
@@ -155,18 +213,15 @@ def create_google_doc(
         resp = cc.execute_tool(
             user_id=user_id,
             provider="googledrive",
-            action="GOOGLEDRIVE_CREATE_FILE",
+            action="GOOGLEDRIVE_CREATE_FILE_FROM_TEXT",
             params={
-                "name": title,
-                "mimeType": "application/vnd.google-apps.document",
-                "content": markdown_content,
+                "file_name": title,
+                "text_content": markdown_content,
             },
         )
-        data = resp.get("response", {}) or resp.get("data", {}) or resp
-        doc_id = data.get("id") or _extract_drive_id(resp)
-
-        if not doc_id:
-            result["error"] = f"Doc created but no ID found. Response: {str(resp)[:300]}"
+        doc_id, err = _parse_composio_response(resp, "googledrive")
+        if err:
+            result["error"] = err
             return result
 
         result["doc_id"] = doc_id
@@ -223,32 +278,40 @@ def create_notion_page(
         "error": None,
     }
 
-    params: dict = {
+    create_params: dict = {
         "title": title,
-        "content": markdown_content,
     }
     if parent_page_id:
-        params["parentPageId"] = parent_page_id
+        create_params["parent_id"] = parent_page_id
 
     try:
         resp = cc.execute_tool(
             user_id=user_id,
             provider="notion",
-            action="NOTION_CREATE_PAGE",
-            params=params,
+            action="NOTION_CREATE_NOTION_PAGE",
+            params=create_params,
         )
-        data = resp.get("response", {}) or resp.get("data", {}) or resp
-        page_id = data.get("id") or _extract_notion_id(resp)
-
-        if not page_id:
-            result["error"] = f"Page created but no ID found. Response: {str(resp)[:300]}"
+        page_id, err = _parse_composio_response(resp, "notion")
+        if err:
+            result["error"] = err
             return result
 
-        # Notion page URLs use dashes-stripped ID
-        clean_id = page_id.replace("-", "")
         result["page_id"] = page_id
+        clean_id = page_id.replace("-", "")
         result["page_url"] = f"https://notion.so/{clean_id}"
-        result["success"] = True
+
+        # Step 2: Add page content using natural language text execution
+        try:
+            cc.execute_tool(
+                user_id=user_id,
+                provider="notion",
+                action="NOTION_ADD_MULTIPLE_PAGE_CONTENT",
+                text_instruction=f"Add the following markdown text as blocks to the page with ID {page_id}:\n\n{markdown_content}"
+            )
+            result["success"] = True
+        except Exception as e:
+            result["success"] = True
+            result["error"] = f"Page created, but failed to append content: {e}"
 
     except RuntimeError as e:
         result["error"] = str(e)

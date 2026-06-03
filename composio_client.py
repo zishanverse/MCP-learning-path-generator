@@ -11,6 +11,7 @@ Supported providers: youtube, googledrive, notion
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Optional
 
@@ -21,21 +22,21 @@ import db
 
 load_dotenv()
 
+logger = logging.getLogger("mcp_learning_path.composio")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_COMPOSIO_API_BASE = "https://backend.composio.dev/api/v1"
+_COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3.1"
 _COMPOSIO_MCP_BASE = "https://mcp.composio.dev"
 
-# Provider → Composio app slug mapping
-_PROVIDER_APP_SLUG: dict[str, str] = {
-    "youtube": "youtube",
-    "googledrive": "googledrive",
-    "notion": "notion",
-}
-
-# Provider → Composio integration ID env var
+# Provider → Composio auth config env var
 _PROVIDER_INTEGRATION_ENV: dict[str, str] = {
     "youtube": "COMPOSIO_YOUTUBE_INTEGRATION_ID",
     "googledrive": "COMPOSIO_DRIVE_INTEGRATION_ID",
@@ -78,25 +79,22 @@ def get_oauth_url(user_id: int, provider: str, redirect_url: Optional[str] = Non
         The URL string the user should open in their browser.
     """
     provider = provider.lower()
-    app_slug = _PROVIDER_APP_SLUG.get(provider)
-    if not app_slug:
-        raise ValueError(f"Unsupported provider: {provider!r}")
-
-    integration_id = _integration_id(provider)
-    entity_id = f"user_{user_id}"
+    auth_config_id = _integration_id(provider)
+    if not auth_config_id:
+        raise EnvironmentError(
+            f"Missing auth config id for {provider!r}. Set the matching COMPOSIO_*_INTEGRATION_ID value in .env."
+        )
 
     payload: dict[str, Any] = {
-        "appName": app_slug,
-        "entityId": entity_id,
+        "auth_config_id": auth_config_id,
+        "user_id": f"user_{user_id}",
     }
-    if integration_id:
-        payload["integrationId"] = integration_id
     if redirect_url:
-        payload["redirectUri"] = redirect_url
+        payload["callback_url"] = redirect_url
 
     try:
         resp = httpx.post(
-            f"{_COMPOSIO_API_BASE}/connectedAccounts",
+            f"{_COMPOSIO_API_BASE}/connected_accounts/link",
             headers={
                 "x-api-key": _api_key(),
                 "Content-Type": "application/json",
@@ -106,13 +104,21 @@ def get_oauth_url(user_id: int, provider: str, redirect_url: Optional[str] = Non
         )
         resp.raise_for_status()
         data = resp.json()
-        oauth_url = data.get("redirectUrl") or data.get("authorizationUrl") or data.get("url")
+        oauth_url = data.get("redirect_url") or data.get("redirectUrl") or data.get("authorizationUrl") or data.get("url")
         if not oauth_url:
             raise RuntimeError(f"Composio returned no OAuth URL. Response: {data}")
         return oauth_url
     except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        body = e.response.text[:500]
+        if status == 401:
+            raise RuntimeError(
+                "Composio rejected COMPOSIO_API_KEY while starting OAuth. "
+                "Check that the key in .env is valid, not revoked, and that the app was restarted "
+                "after updating it."
+            ) from e
         raise RuntimeError(
-            f"Failed to initiate OAuth for {provider}: HTTP {e.response.status_code} — {e.response.text}"
+            f"Failed to initiate OAuth for {provider}: HTTP {status} — {body}"
         ) from e
 
 
@@ -128,7 +134,7 @@ def handle_oauth_callback(user_id: int, provider: str, connected_account_id: str
         connected_account_id: The ID returned by Composio.
     """
     provider = provider.lower()
-    if provider not in _PROVIDER_APP_SLUG:
+    if provider not in _PROVIDER_INTEGRATION_ENV:
         raise ValueError(f"Unsupported provider: {provider!r}")
     db.save_oauth_connection(user_id, provider, connected_account_id)
 
@@ -168,7 +174,8 @@ def execute_tool(
     user_id: int,
     provider: str,
     action: str,
-    params: dict[str, Any],
+    params: Optional[dict[str, Any]] = None,
+    text_instruction: Optional[str] = None,
 ) -> Any:
     """Execute a Composio MCP tool action on behalf of the user.
 
@@ -180,6 +187,7 @@ def execute_tool(
         provider: Tool provider ('youtube', 'googledrive', 'notion').
         action:   Composio action name (e.g. 'YOUTUBE_CREATE_PLAYLIST').
         params:   Action-specific parameters dict.
+        text_instruction: Optional natural language description of the task.
 
     Returns:
         The parsed JSON response from Composio.
@@ -190,41 +198,54 @@ def execute_tool(
     connected_account_id = _resolve_connected_account_id(user_id, provider)
 
     try:
+        action_name = action.strip()
+        request_url = f"{_COMPOSIO_API_BASE}/tools/execute/{action_name}"
+        request_body = {
+            "connected_account_id": connected_account_id,
+            "user_id": f"user_{user_id}",
+        }
+        if text_instruction:
+            request_body["text"] = text_instruction
+        else:
+            request_body["arguments"] = params or {}
+        logger.info("Composio execute request: %s", request_url)
+        logger.info("Composio execute payload: %s", json.dumps(request_body, ensure_ascii=False))
         resp = httpx.post(
-            f"{_COMPOSIO_API_BASE}/actions/{action}/execute",
+            request_url,
             headers={
                 "x-api-key": _api_key(),
                 "Content-Type": "application/json",
             },
-            json={
-                "connectedAccountId": connected_account_id,
-                "input": params,
-            },
+            json=request_body,
             timeout=30.0,
         )
+        logger.info("Composio execute response status: %s", resp.status_code)
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPStatusError as e:
-        status = e.response.status_code
-        body = e.response.text[:500]
-        if status == 401:
-            # Token expired — remove stale connection so user knows to reconnect
+        message = e.response.text[:500]
+        logger.error(
+            "Composio action failed: action=%s provider=%s status=%s body=%s",
+            action,
+            provider,
+            e.response.status_code,
+            message,
+        )
+        if e.response.status_code == 401:
             db.delete_connection(user_id, provider.lower())
             raise RuntimeError(
-                f"OAuth token for {provider!r} has expired or been revoked. "
-                "Please reconnect via the Integrations panel."
+                f"OAuth token for {provider!r} has expired or been revoked. Please reconnect via the Integrations panel."
             ) from e
-        if status == 429:
+        if e.response.status_code == 429:
             raise RuntimeError(
                 f"API quota exhausted for {provider!r}. Please wait and try again."
             ) from e
         raise RuntimeError(
-            f"Composio action {action!r} failed: HTTP {status} — {body}"
+            f"Composio action {action!r} failed: HTTP {e.response.status_code} — {message}"
         ) from e
-    except httpx.TimeoutException as e:
-        raise RuntimeError(
-            f"Request to Composio timed out while executing {action!r}."
-        ) from e
+    except Exception as e:
+        logger.exception("Unexpected Composio execution failure: action=%s provider=%s", action, provider)
+        raise RuntimeError(f"Unexpected error: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +263,7 @@ def verify_connection(user_id: int, provider: str) -> bool:
         if not cid:
             return False
         resp = httpx.get(
-            f"{_COMPOSIO_API_BASE}/connectedAccounts/{cid}",
+            f"{_COMPOSIO_API_BASE}/connected_accounts/{cid}",
             headers={"x-api-key": _api_key()},
             timeout=10.0,
         )
