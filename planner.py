@@ -75,7 +75,8 @@ RULES:
 - Every day must include at least ONE Video resource with a real youtube.com/watch?v= URL.
 - Every day must include at least ONE non-Video resource.
 - Never emit placeholder URLs (e.g. 'your-link-here', 'example.com').
-- YouTube video URLs must be canonical: https://www.youtube.com/watch?v=VIDEO_ID
+- If you know a real working YouTube video ID, use: https://www.youtube.com/watch?v=VIDEO_ID
+- If you DO NOT know a real working video ID for a topic, you MUST output a YouTube search URL instead: https://www.youtube.com/results?search_query=topic+name
 - Prefer videos uploaded in the last 24 months. Include the upload year in the 'year' field.
 - The 'total_days' field must match the exact number of objects in 'days'.
 - Return ONLY the JSON object — nothing else.

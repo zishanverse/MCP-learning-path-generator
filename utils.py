@@ -169,8 +169,26 @@ def search_youtube_for_title(
                 return vid
         return None
     except Exception as e:
-        print(f"[utils] search_youtube_for_title failed: {e}")
-        return None
+        print(f"[utils] search_youtube_for_title API failed: {e}. Falling back to scrape...")
+        try:
+            import urllib.request
+            import urllib.parse
+            import re
+            
+            query = urllib.parse.quote(title)
+            url = f"https://www.youtube.com/results?search_query={query}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=5.0).read().decode()
+            video_ids = re.findall(r"watch\?v=([A-Za-z0-9_-]{11})", html)
+            
+            exclude = set(exclude_ids or [])
+            for vid in video_ids:
+                if vid not in exclude:
+                    return vid
+            return None
+        except Exception as scrape_e:
+            print(f"[utils] search_youtube_for_title scrape failed: {scrape_e}")
+            return None
 
 
 def extract_video_ids_from_text(
@@ -279,27 +297,17 @@ def extract_video_ids_from_learning_path(
     # First pass: try to extract from URLs
     for day in lp.days:
         for r in day.resources:
-            if r.type == "Video" and ("youtube" in r.url.lower() or "youtu.be" in r.url.lower()):
-                # Extract directly from URL string using the text extractor logic
-                extracted = extract_video_ids_from_text(
-                    r.url, fetch_generic_urls=fetch_generic_urls, max_fetches=max_fetches
-                )
-                
-                valid_id = None
-                if extracted:
-                    valid_id = extracted[0]
-                    for eid in extracted:
-                        _record(eid)
-                
-                # If we couldn't extract an ID from the URL (e.g. placeholder), search by title
-                if not valid_id and r.title:
+            if r.type == "Video":
+                # Always search by title to ensure we get a real, working video ID.
+                # LLMs frequently hallucinate fake 11-character video IDs that pass regex but fail on YouTube.
+                vid = None
+                if r.title:
                     vid = search_youtube_for_title(r.title, exclude_ids=seen)
-                    if vid:
-                        valid_id = _normalize_video_id(vid)
-                        _record(valid_id)
                 
-                # Update the resource URL in the learning path object
-                if valid_id:
+                if vid:
+                    valid_id = _normalize_video_id(vid)
+                    _record(valid_id)
+                    # Update the resource URL in the learning path object
                     r.url = f"https://www.youtube.com/watch?v={valid_id}"
 
     return ids
