@@ -412,13 +412,73 @@ div[data-testid="stChatMessage"] {
     }
 }
 
-/* Disable default Streamlit fading during rerun */
-div[data-testid="stAppViewBlockContainer"] {
+/* ── Suppress Streamlit rerun opacity flicker ────────────────────────── */
+div[data-testid="stAppViewBlockContainer"],
+[data-testid="stApp"] > div:first-child {
     opacity: 1 !important;
+    transition: none !important;
+}
+
+/* ── Full-screen page-load splash ───────────────────────────────────── */
+#app-splash {
+    position: fixed;
+    inset: 0;
+    z-index: 999999;
+    background: #030712;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.6rem;
+    animation: fadeOutSplash 0.5s ease forwards;
+    animation-delay: 2.2s;
+}
+@keyframes fadeOutSplash {
+    to { opacity: 0; visibility: hidden; pointer-events: none; }
+}
+#app-splash .splash-ring {
+    width: 64px;
+    height: 64px;
+    border: 4px solid rgba(139, 92, 246, 0.15);
+    border-top: 4px solid #8b5cf6;
+    border-radius: 50%;
+    animation: splash-spin 0.85s linear infinite;
+}
+#app-splash .splash-logo {
+    font-size: 2.2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #a78bfa 0%, #22d3ee 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.02em;
+    font-family: 'Manrope', sans-serif;
+}
+#app-splash .splash-sub {
+    font-size: 0.88rem;
+    color: rgba(148, 163, 184, 0.6);
+    font-family: 'Manrope', sans-serif;
+    letter-spacing: 0.06em;
+}
+@keyframes splash-spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 </style>
 """
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+
+# ── Page-load splash overlay ───────────────────────────────────────────────
+st.markdown(
+    """
+    <div id="app-splash">
+        <div class="splash-ring"></div>
+        <div class="splash-logo">🧭 Learning Path Generator</div>
+        <div class="splash-sub">Loading…</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Privacy policy route
@@ -454,8 +514,13 @@ def _handle_oauth_callback() -> None:
     try:
         cc.handle_oauth_callback(user["id"], provider, account_id)
         st.success(f"✅ {provider.title()} connected successfully!")
-        # Clear query params and rerun
+        
+        # Clear OAuth query params but preserve login_email so refresh doesn't log out
+        email = st.query_params.get("login_email")
         st.query_params.clear()
+        if email:
+            st.query_params["login_email"] = email
+            
         st.rerun()
     except Exception as e:
         st.error(f"Failed to save {provider} connection: {e}")
@@ -552,13 +617,13 @@ with st.sidebar:
                     oauth_url = cc.get_oauth_url(user_id, provider, redirect_url=redirect)
                     st.markdown(
                         f"<div style='margin-top: 5px; margin-bottom: 5px; text-align: center;'>"
-                        f"<a href='{oauth_url}' target='_self' "
+                        f"<a href='{oauth_url}' target='_blank' "
                         f"style='color:#22d3ee;text-decoration:underline;font-weight:bold;font-size:0.9rem;'>"
-                        f"Click here to authorise {label} →</a>"
+                        f"Click here to authorise {label} (Opens in new tab) →</a>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
-                    st.caption("This will authorize connection in this tab and redirect you back automatically.")
+                    st.caption("This will open a new tab. After connecting, return here and the app will refresh automatically.")
                     if provider == "googledrive":
                         st.caption("⚠️ Note: Make sure to check the box for full Google Drive file write access on the Google permission page.")
                     elif provider == "notion":
@@ -652,8 +717,6 @@ user_goal = st.session_state.pending_goal.strip()
 # Generate button
 # ---------------------------------------------------------------------------
 
-progress_placeholder = st.empty()
-status_placeholder = st.empty()
 
 if st.button(
     "⚡ Generate Learning Path",
@@ -663,196 +726,96 @@ if st.button(
 ):
     st.session_state.is_generating = True
     st.session_state.generation_result = None
-    steps: list[str] = []
-
-    def _progress(msg: str) -> None:
-        steps.append(msg)
-        steps_html = "".join([f"<li>{s}</li>" for s in steps[-5:]])
-        progress_placeholder.markdown(
-            f"""
-            <style>
-            /* Hide other elements during loading */
-            [data-testid="stSidebar"],
-            .hero-card,
-            .status-strip,
-            .section-label,
-            .glass-card,
-            .recent-path-card,
-            .stButton,
-            [data-testid="stChatInput"],
-            [data-testid="stChatMessage"] {{
-                display: none !important;
-            }}
-            
-            /* Standalone Loader Card */
-            .custom-loader-card-standalone {{
-                background: rgba(15, 23, 42, 0.85) !important;
-                border: 1px solid rgba(139, 92, 246, 0.25) !important;
-                border-radius: 24px !important;
-                padding: 3rem 2.5rem !important;
-                text-align: center !important;
-                box-shadow: 0 30px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05) !important;
-                max-width: 480px !important;
-                margin: 15vh auto !important;
-                backdrop-filter: blur(16px) !important;
-                -webkit-backdrop-filter: blur(16px) !important;
-                animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
-            }}
-            .spinner-ring {{
-                width: 60px !important;
-                height: 60px !important;
-                border: 4px solid rgba(139, 92, 246, 0.15) !important;
-                border-top: 4px solid #8b5cf6 !important;
-                border-radius: 50% !important;
-                margin: 0 auto 1.8rem !important;
-                animation: spin 0.8s linear infinite !important;
-            }}
-            .loader-steps {{
-                list-style-type: none !important;
-                padding-left: 0 !important;
-                margin: 0 auto !important;
-                max-width: 340px !important;
-                text-align: left !important;
-            }}
-            .loader-steps li {{
-                color: rgba(148, 163, 184, 0.6) !important;
-                font-size: 0.9rem !important;
-                margin-bottom: 0.5rem !important;
-                display: flex !important;
-                align-items: center !important;
-                gap: 0.6rem !important;
-                line-height: 1.4 !important;
-            }}
-            .loader-steps li::before {{
-                content: "✓" !important;
-                color: #10b981 !important;
-                font-weight: bold !important;
-            }}
-            .loader-steps li:last-child {{
-                color: #22d3ee !important;
-                font-weight: 600 !important;
-                animation: pulse 1.5s infinite !important;
-            }}
-            .loader-steps li:last-child::before {{
-                content: "●" !important;
-                color: #22d3ee !important;
-                animation: blink 1s infinite !important;
-            }}
-            @keyframes spin {{
-                0% {{ transform: rotate(0deg); }}
-                100% {{ transform: rotate(360deg); }}
-            }}
-            @keyframes scaleUp {{
-                from {{ transform: scale(0.96); opacity: 0; }}
-                to {{ transform: scale(1); opacity: 1; }}
-            }}
-            @keyframes pulse {{
-                0%, 100% {{ opacity: 1; }}
-                50% {{ opacity: 0.6; }}
-            }}
-            @keyframes blink {{
-                0%, 100% {{ opacity: 1; }}
-                50% {{ opacity: 0.3; }}
-            }}
-            </style>
-            
-            <div class="custom-loader-card-standalone">
-                <div class="spinner-ring"></div>
-                <h3 style="color:#ffffff; margin-top:0; margin-bottom:1.5rem; font-weight:700; font-size:1.45rem; letter-spacing:-0.02em;">🧭 Designing Your Path</h3>
-                <ul class="loader-steps">
-                    {steps_html}
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # Trigger initial loader state immediately
-    _progress(f"Initializing with {selected_model_label}…")
 
     try:
-        # --- Planning layer ---
-        learning_path = generate_path(
-            user_goal=user_goal,
-            model_name=selected_model,
-            progress_callback=_progress,
-        )
+        with st.status(f"🧭 Generating with **{selected_model_label}**…", expanded=True) as status:
 
-        # --- Video validation ---
-        valid_ids = []
-        if conn_status.get("youtube"):
-            _progress("Extracting and validating YouTube video IDs…")
-            raw_ids = extract_video_ids_from_learning_path(learning_path)
-            if raw_ids:
-                valid_ids, invalid_ids = filter_available_videos(raw_ids)
-                if invalid_ids:
-                    _progress(f"Filtered {len(invalid_ids)} unavailable video(s).")
-            else:
-                _progress("No YouTube video IDs found in generated content.")
+            def _progress(msg: str) -> None:
+                status.write(msg)
 
-        # --- Generate Markdown with updated URLs ---
-        _progress("Converting to markdown…")
-        markdown_text = learning_path_to_markdown(learning_path)
+            # --- Planning layer ---
+            _progress(f"🤖 Calling {selected_model_label}…")
+            learning_path = generate_path(
+                user_goal=user_goal,
+                model_name=selected_model,
+                progress_callback=_progress,
+            )
 
-        # --- Action layer ---
-        _progress("Running post-generation actions…")
-        action_results = run_post_generation_actions(
-            user_id=user_id,
-            goal=user_goal,
-            markdown=markdown_text,
-            video_ids=valid_ids,
-            connection_status=conn_status,
-            progress_callback=_progress,
-        )
+            # --- Video validation ---
+            valid_ids = []
+            if conn_status.get("youtube"):
+                _progress("📺 Extracting and validating YouTube video IDs…")
+                raw_ids = extract_video_ids_from_learning_path(learning_path)
+                if raw_ids:
+                    valid_ids, invalid_ids = filter_available_videos(raw_ids)
+                    if invalid_ids:
+                        _progress(f"⚠️ Filtered {len(invalid_ids)} unavailable video(s).")
+                else:
+                    _progress("ℹ️ No YouTube video IDs found in generated content.")
 
-        # --- Rebuild markdown with real URLs ---
-        playlist_url = None
-        doc_url = None
-        notion_url = None
+            # --- Generate Markdown ---
+            _progress("📝 Converting to markdown…")
+            markdown_text = learning_path_to_markdown(learning_path)
 
-        def _action_success(name: str) -> bool:
-            action = action_results.get(name) or {}
-            return bool(action.get("success"))
+            # --- Action layer ---
+            _progress("🔗 Running post-generation actions…")
+            action_results = run_post_generation_actions(
+                user_id=user_id,
+                goal=user_goal,
+                markdown=markdown_text,
+                video_ids=valid_ids,
+                connection_status=conn_status,
+                progress_callback=_progress,
+            )
 
-        if _action_success("playlist"):
-            playlist_url = (action_results.get("playlist") or {}).get("playlist_url")
-            _progress(f"Playlist created: {playlist_url}")
+            # --- Rebuild markdown with real URLs ---
+            playlist_url = None
+            doc_url = None
+            notion_url = None
 
-        if _action_success("google_doc"):
-            doc_url = (action_results.get("google_doc") or {}).get("doc_url")
-            _progress(f"Google Doc created: {doc_url}")
+            def _action_success(name: str) -> bool:
+                action = action_results.get(name) or {}
+                return bool(action.get("success"))
 
-        if _action_success("notion_page"):
-            notion_url = (action_results.get("notion_page") or {}).get("page_url")
-            _progress(f"Notion page created: {notion_url}")
+            if _action_success("playlist"):
+                playlist_url = (action_results.get("playlist") or {}).get("playlist_url")
+                _progress(f"✅ Playlist created!")
 
-        final_markdown = learning_path_to_markdown(
-            learning_path,
-            playlist_url=playlist_url,
-            doc_url=doc_url,
-            notion_url=notion_url,
-        )
+            if _action_success("google_doc"):
+                doc_url = (action_results.get("google_doc") or {}).get("doc_url")
+                _progress(f"✅ Google Doc created!")
 
-        # --- Persist to DB ---
-        db.save_learning_path(
-            user_id=user_id,
-            goal=user_goal,
-            playlist_url=playlist_url,
-            google_doc_url=doc_url,
-            notion_url=notion_url,
-            markdown=final_markdown,
-        )
+            if _action_success("notion_page"):
+                notion_url = (action_results.get("notion_page") or {}).get("page_url")
+                _progress(f"✅ Notion page created!")
 
-        st.session_state.generation_result = {
-            "lp": learning_path,
-            "markdown": final_markdown,
-            "actions": action_results,
-            "playlist_url": playlist_url,
-            "doc_url": doc_url,
-            "notion_url": notion_url,
-        }
-        _progress("✅ All done!")
-        st.rerun()
+            final_markdown = learning_path_to_markdown(
+                learning_path,
+                playlist_url=playlist_url,
+                doc_url=doc_url,
+                notion_url=notion_url,
+            )
+
+            # --- Persist to DB ---
+            db.save_learning_path(
+                user_id=user_id,
+                goal=user_goal,
+                playlist_url=playlist_url,
+                google_doc_url=doc_url,
+                notion_url=notion_url,
+                markdown=final_markdown,
+            )
+
+            st.session_state.generation_result = {
+                "lp": learning_path,
+                "markdown": final_markdown,
+                "actions": action_results,
+                "playlist_url": playlist_url,
+                "doc_url": doc_url,
+                "notion_url": notion_url,
+            }
+
+            status.update(label="✅ Learning path ready!", state="complete", expanded=False)
 
     except Exception as e:
         st.error(f"Generation failed: {e}")
@@ -861,7 +824,8 @@ if st.button(
             st.code(traceback.format_exc())
     finally:
         st.session_state.is_generating = False
-        progress_placeholder.empty()
+        st.rerun()
+
 
 result = st.session_state.generation_result
 if result:

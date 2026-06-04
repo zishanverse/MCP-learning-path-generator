@@ -82,6 +82,8 @@ def require_login() -> dict:
 def logout() -> None:
     """Clear the current session."""
     st.session_state.pop(_SESSION_KEY, None)
+    if "login_email" in st.query_params:
+        del st.query_params["login_email"]
     try:
         controller = CookieController()
         controller.remove("auth_user_email")
@@ -125,6 +127,7 @@ def _do_login(email: str) -> None:
     except Exception:
         pass
         
+    st.query_params["login_email"] = email
     st.rerun()
 
 
@@ -190,6 +193,8 @@ def _login_ui() -> None:
             key="login_email_input",
             label_visibility="collapsed",
         )
-        if st.button("Get Started →", use_container_width=True, type="primary"):
-            _do_login(email)
+        if st.button("Get Started →", use_container_width=True, type="primary", key="login_btn"):
+            with st.spinner("Signing you in…"):
+                _do_login(email)
         st.caption("<div style='text-align:center; color:#64748b; margin-top:0.4rem;'>No password required during preview. Your email is your unique identity.</div>", unsafe_allow_html=True)
+
