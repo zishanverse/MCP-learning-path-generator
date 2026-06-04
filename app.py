@@ -416,89 +416,6 @@ div[data-testid="stChatMessage"] {
 div[data-testid="stAppViewBlockContainer"] {
     opacity: 1 !important;
 }
-
-/* Custom Loader Overlay */
-.custom-loader-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(3, 7, 18, 0.7);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 999999;
-}
-.custom-loader-card {
-    background: rgba(15, 23, 42, 0.85);
-    border: 1px solid rgba(139, 92, 246, 0.25);
-    border-radius: 24px;
-    padding: 2.5rem 2rem;
-    text-align: center;
-    box-shadow: 0 30px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
-    max-width: 420px;
-    width: 90%;
-    animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.spinner-ring {
-    width: 56px;
-    height: 56px;
-    border: 4px solid rgba(139, 92, 246, 0.15);
-    border-top: 4px solid #8b5cf6;
-    border-radius: 50%;
-    margin: 0 auto 1.5rem;
-    animation: spin 0.8s linear infinite;
-}
-.loader-steps {
-    list-style-type: none !important;
-    padding-left: 0 !important;
-    margin: 0 auto !important;
-    max-width: 320px;
-    text-align: left;
-}
-.loader-steps li {
-    color: rgba(148, 163, 184, 0.6);
-    font-size: 0.88rem;
-    margin-bottom: 0.45rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    line-height: 1.4;
-}
-.loader-steps li::before {
-    content: "✓";
-    color: #10b981;
-    font-weight: bold;
-}
-.loader-steps li:last-child {
-    color: #22d3ee;
-    font-weight: 600;
-    animation: pulse 1.5s infinite;
-}
-.loader-steps li:last-child::before {
-    content: "●";
-    color: #22d3ee;
-    animation: blink 1s infinite;
-}
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-@keyframes scaleUp {
-    from { transform: scale(0.96); opacity: 0; }
-    to { transform: scale(1); opacity: 1; }
-}
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-}
-@keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-}
 </style>
 """
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
@@ -731,7 +648,6 @@ if chat_prompt:
     st.rerun()
 
 user_goal = st.session_state.pending_goal.strip()
-
 # ---------------------------------------------------------------------------
 # Generate button
 # ---------------------------------------------------------------------------
@@ -754,14 +670,98 @@ if st.button(
         steps_html = "".join([f"<li>{s}</li>" for s in steps[-5:]])
         progress_placeholder.markdown(
             f"""
-            <div class="custom-loader-overlay">
-                <div class="custom-loader-card">
-                    <div class="spinner-ring"></div>
-                    <h3 style="color:#ffffff; margin-top:0; margin-bottom:1.2rem; font-weight:700; font-size:1.35rem; letter-spacing:-0.02em;">🧭 Designing Your Path</h3>
-                    <ul class="loader-steps">
-                        {steps_html}
-                    </ul>
-                </div>
+            <style>
+            /* Hide other elements during loading */
+            [data-testid="stSidebar"],
+            .hero-card,
+            .status-strip,
+            .section-label,
+            .glass-card,
+            .recent-path-card,
+            .stButton,
+            [data-testid="stChatInput"],
+            [data-testid="stChatMessage"] {{
+                display: none !important;
+            }}
+            
+            /* Standalone Loader Card */
+            .custom-loader-card-standalone {{
+                background: rgba(15, 23, 42, 0.85) !important;
+                border: 1px solid rgba(139, 92, 246, 0.25) !important;
+                border-radius: 24px !important;
+                padding: 3rem 2.5rem !important;
+                text-align: center !important;
+                box-shadow: 0 30px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+                max-width: 480px !important;
+                margin: 15vh auto !important;
+                backdrop-filter: blur(16px) !important;
+                -webkit-backdrop-filter: blur(16px) !important;
+                animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            }}
+            .spinner-ring {{
+                width: 60px !important;
+                height: 60px !important;
+                border: 4px solid rgba(139, 92, 246, 0.15) !important;
+                border-top: 4px solid #8b5cf6 !important;
+                border-radius: 50% !important;
+                margin: 0 auto 1.8rem !important;
+                animation: spin 0.8s linear infinite !important;
+            }}
+            .loader-steps {{
+                list-style-type: none !important;
+                padding-left: 0 !important;
+                margin: 0 auto !important;
+                max-width: 340px !important;
+                text-align: left !important;
+            }}
+            .loader-steps li {{
+                color: rgba(148, 163, 184, 0.6) !important;
+                font-size: 0.9rem !important;
+                margin-bottom: 0.5rem !important;
+                display: flex !important;
+                align-items: center !important;
+                gap: 0.6rem !important;
+                line-height: 1.4 !important;
+            }}
+            .loader-steps li::before {{
+                content: "✓" !important;
+                color: #10b981 !important;
+                font-weight: bold !important;
+            }}
+            .loader-steps li:last-child {{
+                color: #22d3ee !important;
+                font-weight: 600 !important;
+                animation: pulse 1.5s infinite !important;
+            }}
+            .loader-steps li:last-child::before {{
+                content: "●" !important;
+                color: #22d3ee !important;
+                animation: blink 1s infinite !important;
+            }}
+            @keyframes spin {{
+                0% {{ transform: rotate(0deg); }}
+                100% {{ transform: rotate(360deg); }}
+            }}
+            @keyframes scaleUp {{
+                from {{ transform: scale(0.96); opacity: 0; }}
+                to {{ transform: scale(1); opacity: 1; }}
+            }}
+            @keyframes pulse {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.6; }}
+            }}
+            @keyframes blink {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.3; }}
+            }}
+            </style>
+            
+            <div class="custom-loader-card-standalone">
+                <div class="spinner-ring"></div>
+                <h3 style="color:#ffffff; margin-top:0; margin-bottom:1.5rem; font-weight:700; font-size:1.45rem; letter-spacing:-0.02em;">🧭 Designing Your Path</h3>
+                <ul class="loader-steps">
+                    {steps_html}
+                </ul>
             </div>
             """,
             unsafe_allow_html=True
@@ -852,6 +852,7 @@ if st.button(
             "notion_url": notion_url,
         }
         _progress("✅ All done!")
+        st.rerun()
 
     except Exception as e:
         st.error(f"Generation failed: {e}")
@@ -861,11 +862,6 @@ if st.button(
     finally:
         st.session_state.is_generating = False
         progress_placeholder.empty()
-        st.rerun()
-
-# ---------------------------------------------------------------------------
-# Results display
-# ---------------------------------------------------------------------------
 
 result = st.session_state.generation_result
 if result:
