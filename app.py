@@ -414,9 +414,14 @@ div[data-testid="stChatMessage"] {
 
 /* ── Suppress Streamlit rerun opacity flicker ────────────────────────── */
 div[data-testid="stAppViewBlockContainer"],
-[data-testid="stApp"] > div:first-child {
+[data-testid="stApp"] > div:first-child,
+[data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"],
+div.stTextInput,
+[data-stale="true"] {
     opacity: 1 !important;
     transition: none !important;
+    filter: none !important;
 }
 
 /* ── Full-screen page-load splash ───────────────────────────────────── */
@@ -431,7 +436,7 @@ div[data-testid="stAppViewBlockContainer"],
     justify-content: center;
     gap: 1.6rem;
     animation: fadeOutSplash 0.5s ease forwards;
-    animation-delay: 2.2s;
+    animation-delay: 0.4s;
 }
 @keyframes fadeOutSplash {
     to { opacity: 0; visibility: hidden; pointer-events: none; }
@@ -515,11 +520,8 @@ def _handle_oauth_callback() -> None:
         cc.handle_oauth_callback(user["id"], provider, account_id)
         st.success(f"✅ {provider.title()} connected successfully!")
         
-        # Clear OAuth query params but preserve login_email so refresh doesn't log out
-        email = st.query_params.get("login_email")
+        # Clear OAuth query params
         st.query_params.clear()
-        if email:
-            st.query_params["login_email"] = email
             
         st.rerun()
     except Exception as e:
@@ -562,8 +564,11 @@ with st.sidebar:
     st.markdown(f"### 👤 {user['name']}")
     st.caption(user["email"])
     if st.button("Sign out", key="signout_btn"):
-        auth.logout()
-        st.rerun()
+        with st.spinner("Signing out..."):
+            import time
+            time.sleep(0.5)
+            auth.logout()
+            st.rerun()
 
     st.divider()
 
@@ -610,9 +615,8 @@ with st.sidebar:
                 try:
                     # Build redirect URL back to this app with oauth_callback param
                     app_url = os.getenv("APP_URL", "http://localhost:8501")
-                    # Include user email to preserve session on redirect
-                    user_email = user["email"]
-                    redirect = f"{app_url}?oauth_callback={provider}&login_email={user_email}"
+                    # Session is preserved securely via cookies. No URL token needed.
+                    redirect = f"{app_url}?oauth_callback={provider}"
                     
                     oauth_url = cc.get_oauth_url(user_id, provider, redirect_url=redirect)
                     st.markdown(

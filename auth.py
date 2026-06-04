@@ -41,52 +41,60 @@ def require_login() -> dict:
     Call this at the top of any page that requires authentication.
     Returns the user dict when logged in.
     """
-    _maybe_dev_autologin()
-    
     # Try restoring session from browser cookie
     if get_current_user() is None:
         try:
             controller = CookieController()
-            saved_email = controller.get("auth_user_email")
-            if saved_email:
-                user = db.get_or_create_user(saved_email)
-                st.session_state[_SESSION_KEY] = user
+            saved_token = controller.get("auth_session_token")
+            if saved_token:
+                user = db.get_user_by_session_token(saved_token)
+                if user:
+                    st.session_state[_SESSION_KEY] = user
         except Exception:
             pass
     
-    # Auto-login from query parameter if user session is lost
-    params = st.query_params
-    if get_current_user() is None and "login_email" in params:
-        email = params["login_email"]
-        try:
-            user = db.get_or_create_user(email)
-            st.session_state[_SESSION_KEY] = user
-            
-            # Save to cookie for 30 days
-            try:
-                controller = CookieController()
-                expires = datetime.datetime.now() + datetime.timedelta(days=30)
-                controller.set("auth_user_email", email, expires=expires)
-            except Exception:
-                pass
-        except Exception:
-            pass
+    # Auto-login from cookie is handled above. 
+    # Removed insecure fallback from query_params to prevent session fixation/URL leakage.
 
     user = get_current_user()
     if user is None:
+        # Workaround for Streamlit's asynchronous custom components.
+        # On a hard refresh or OAuth redirect, the CookieController takes a fraction
+        # of a second to send the cookie from the browser to the Python backend.
+        # If we instantly show the login screen, we break the OAuth callback flow.
+        if "cookie_waited" not in st.session_state:
+            st.session_state["cookie_waited"] = True
+            with st.spinner("Restoring session..."):
+                pass
+            # Stop execution here. The CookieController component rendered above 
+            # will instantly read the cookie and trigger a rerun behind the scenes.
+            st.stop()
+            
+        # If we waited and still have no user, they are truly logged out.
         _login_ui()
         st.stop()
+        
+    # Clear the wait flag for future runs now that we are logged in
+    st.session_state.pop("cookie_waited", None)
+    
     return user
 
 
 def logout() -> None:
     """Clear the current session."""
-    st.session_state.pop(_SESSION_KEY, None)
-    if "login_email" in st.query_params:
-        del st.query_params["login_email"]
+    user = st.session_state.get(_SESSION_KEY)
+    if user:
+        try:
+            db.update_session_token(user["id"], clear=True)
+        except Exception:
+            pass
+            
+    # Wipe the entire session state to ensure no cached states survive
+    st.session_state.clear()
+    
     try:
         controller = CookieController()
-        controller.remove("auth_user_email")
+        controller.remove("auth_session_token")
     except Exception:
         pass
 
@@ -95,40 +103,81 @@ def logout() -> None:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _maybe_dev_autologin() -> None:
-    """If DEV_USER_EMAIL is set, automatically log in as that user."""
-    if get_current_user() is not None:
-        return
-    dev_email = os.getenv(_DEV_EMAIL_VAR, "").strip()
-    if dev_email:
-        user = db.get_or_create_user(dev_email, name="Dev User")
-        st.session_state[_SESSION_KEY] = user
+import re
+import bcrypt
 
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-def _do_login(email: str) -> None:
-    """Validate email, create/fetch user, store in session."""
-    email = email.strip().lower()
+def verify_password(password: str, hashed: str) -> bool:
+    if not hashed:
+        return False
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def _set_session_and_rerun(user: dict) -> None:
+    """Store user in session, cookie, and URL, then rerun to enter app."""
+    # Generate a secure session token
+    token = db.update_session_token(user["id"])
     
-    # Robust RFC 5322 compliant regex for email validation
-    import re
-    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if not email or not re.match(email_regex, email):
-        st.error("Please enter a valid email address (e.g. name@example.com).")
-        return
-        
-    user = db.get_or_create_user(email)
     st.session_state[_SESSION_KEY] = user
-    
-    # Save to cookie for 30 days
     try:
         controller = CookieController()
         expires = datetime.datetime.now() + datetime.timedelta(days=30)
-        controller.set("auth_user_email", email, expires=expires)
+        controller.set("auth_session_token", token, expires=expires)
     except Exception:
         pass
         
-    st.query_params["login_email"] = email
     st.rerun()
+
+
+def _do_login(email: str, password: str) -> None:
+    email = email.strip().lower()
+    if not email or not password:
+        st.error("Please enter both email and password.")
+        return
+        
+    user = db.get_user_by_email(email)
+    if not user:
+        st.error("Invalid email or password.")
+        return
+        
+    if not user.get("hashed_password"):
+        st.warning("Account missing password! Since this account was created during the preview phase, please go to 'Sign Up' and register again with the same email to set a secure password.")
+        return
+        
+    if not verify_password(password, user["hashed_password"]):
+        st.error("Invalid email or password.")
+        return
+        
+    with st.spinner("Logging in..."):
+        import time
+        time.sleep(0.6)
+        _set_session_and_rerun(user)
+
+
+def _do_signup(email: str, name: str, password: str, confirm_password: str) -> None:
+    email = email.strip().lower()
+    name = name.strip()
+    
+    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if not email or not re.match(email_regex, email):
+        st.error("Please enter a valid email address.")
+        return
+        
+    if not password or len(password) < 6:
+        st.error("Password must be at least 6 characters long.")
+        return
+        
+    if password != confirm_password:
+        st.error("Passwords do not match.")
+        return
+        
+    with st.spinner("Creating account..."):
+        hashed = hash_password(password)
+        user = db.get_or_create_user(email, name=name, hashed_password=hashed)
+        import time
+        time.sleep(0.6)
+        _set_session_and_rerun(user)
 
 
 def _login_ui() -> None:
@@ -176,10 +225,13 @@ def _login_ui() -> None:
             border-color: rgba(139, 92, 246, 0.5) !important;
             box-shadow: 0 0 15px rgba(139, 92, 246, 0.2) !important;
         }
+        .stTabs [data-baseweb="tab-list"] {
+            justify-content: center;
+        }
         </style>
         <div class="login-card">
             <h2>🧭 Learning Path Generator</h2>
-            <p>Enter your email below to start generating personalized learning paths, Google docs, and playlists.</p>
+            <p>Sign in or create an account to start generating personalized learning paths.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -187,14 +239,20 @@ def _login_ui() -> None:
 
     col1, col2, col3 = st.columns([1, 1.8, 1])
     with col2:
-        email = st.text_input(
-            "Email address",
-            placeholder="you@example.com",
-            key="login_email_input",
-            label_visibility="collapsed",
-        )
-        if st.button("Get Started →", use_container_width=True, type="primary", key="login_btn"):
-            with st.spinner("Signing you in…"):
-                _do_login(email)
-        st.caption("<div style='text-align:center; color:#64748b; margin-top:0.4rem;'>No password required during preview. Your email is your unique identity.</div>", unsafe_allow_html=True)
-
+        tab_login, tab_signup = st.tabs(["Log In", "Sign Up"])
+        
+        with tab_login:
+            login_email = st.text_input("Email", placeholder="you@example.com", key="login_email")
+            login_pass = st.text_input("Password", type="password", placeholder="••••••••", key="login_pass")
+            if st.button("Log In →", use_container_width=True, type="primary", key="login_btn"):
+                with st.spinner("Signing you in…"):
+                    _do_login(login_email, login_pass)
+                    
+        with tab_signup:
+            signup_name = st.text_input("Name", placeholder="Your Name", key="signup_name")
+            signup_email = st.text_input("Email", placeholder="you@example.com", key="signup_email")
+            signup_pass = st.text_input("Password", type="password", placeholder="At least 6 characters", key="signup_pass")
+            signup_confirm = st.text_input("Confirm Password", type="password", placeholder="Repeat password", key="signup_confirm")
+            if st.button("Create Account →", use_container_width=True, type="primary", key="signup_btn"):
+                with st.spinner("Creating account…"):
+                    _do_signup(signup_email, signup_name, signup_pass, signup_confirm)

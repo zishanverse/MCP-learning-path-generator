@@ -52,6 +52,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=True)
+    session_token = Column(String, nullable=True, unique=True, index=True)
     name = Column(String, nullable=True)
     created_at = Column(DateTime, default=_now, nullable=False)
 
@@ -59,6 +61,7 @@ class User(Base):
         return {
             "id": self.id,
             "email": self.email,
+            "hashed_password": self.hashed_password,
             "name": self.name,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }
@@ -108,6 +111,27 @@ class LearningPathRecord(Base):
 def init_db() -> None:
     """Create all tables if they don't already exist."""
     Base.metadata.create_all(bind=engine)
+    
+    # Migration: add hashed_password column to users
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN hashed_password VARCHAR"
+            ))
+            conn.commit()
+    except Exception:
+        pass  # Column already exists
+        
+    # Migration: add session_token column to users
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN session_token VARCHAR"
+            ))
+            conn.commit()
+    except Exception:
+        pass  # Column already exists
+        
     # Migration: add notion_parent_page_id column to existing databases
     try:
         with engine.connect() as conn:
@@ -152,18 +176,50 @@ def init_db() -> None:
 # Users
 # ---------------------------------------------------------------------------
 
-def get_or_create_user(email: str, name: Optional[str] = None) -> dict:
+def get_or_create_user(email: str, name: Optional[str] = None, hashed_password: Optional[str] = None) -> dict:
     email = email.strip().lower()
     with SessionLocal() as session:
         user = session.query(User).filter(User.email == email).first()
         if user:
+            # If an existing user (e.g. from passwordless preview) sets a password, save it
+            if hashed_password and not user.hashed_password:
+                user.hashed_password = hashed_password
+                session.commit()
+                session.refresh(user)
             return user.to_dict()
 
-        user = User(email=email, name=name or email.split("@")[0])
+        user = User(email=email, name=name or email.split("@")[0], hashed_password=hashed_password)
         session.add(user)
         session.commit()
         session.refresh(user)
         return user.to_dict()
+
+def get_user_by_email(email: str) -> Optional[dict]:
+    email = email.strip().lower()
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.email == email).first()
+        return user.to_dict() if user else None
+
+import uuid
+
+def update_session_token(user_id: int, clear: bool = False) -> Optional[str]:
+    """Generate a new UUID session token and save it to the DB. Or clear it if clear=True."""
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+        token = None if clear else str(uuid.uuid4())
+        user.session_token = token
+        session.commit()
+        return token
+
+def get_user_by_session_token(token: str) -> Optional[dict]:
+    """Securely look up a user by their unguessable UUID session token."""
+    if not token:
+        return None
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.session_token == token).first()
+        return user.to_dict() if user else None
 
 
 def get_user_by_id(user_id: int) -> Optional[dict]:
