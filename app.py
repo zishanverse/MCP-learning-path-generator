@@ -89,95 +89,257 @@ GLOBAL_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
 :root {
     --bg-dark: #050913;
-    --card-bg: rgba(15, 23, 42, 0.75);
-    --card-border: rgba(226, 232, 240, 0.2);
-    --accent: #a855f7;
-    --accent-2: #22d3ee;
-    --text-muted: #cbd5f5;
-    --green: #22c55e;
+    --card-bg: rgba(15, 23, 42, 0.6);
+    --card-border: rgba(148, 163, 184, 0.1);
+    --accent: #8b5cf6;
+    --accent-glow: rgba(139, 92, 246, 0.25);
+    --accent-2: #06b6d4;
+    --accent-2-glow: rgba(6, 182, 212, 0.25);
+    --text-muted: #94a3b8;
+    --green: #10b981;
     --red: #ef4444;
-    --yellow: #eab308;
+    --yellow: #f59e0b;
 }
+
 [data-testid="stAppViewContainer"] {
-    background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 35%),
-                radial-gradient(circle at 80% 0%, rgba(168,85,247,0.15), transparent 40%),
-                radial-gradient(circle at 0% 80%, rgba(34,211,238,0.14), transparent 45%),
-                #050913;
+    background: radial-gradient(circle at 10% 20%, rgba(6,182,212,0.08), transparent 40%),
+                radial-gradient(circle at 90% 10%, rgba(139,92,246,0.1), transparent 45%),
+                radial-gradient(circle at 50% 80%, rgba(16,185,129,0.06), transparent 50%),
+                #030712;
     font-family: 'Manrope', sans-serif;
     color: #f8fafc;
 }
+
 [data-testid="stSidebar"] > div:first-child {
-    background: rgba(5, 8, 19, 0.9);
-    backdrop-filter: blur(18px);
-    border-right: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(3, 7, 18, 0.85);
+    backdrop-filter: blur(24px);
+    border-right: 1px solid rgba(148, 163, 184, 0.08);
 }
+
+/* Hide Streamlit brand elements */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: rgba(3, 7, 18, 0.3);
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.25);
+    border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.5);
+}
+
 /* Hero */
 .hero-card {
-    border-radius: 24px;
+    border-radius: 20px;
     padding: 2.2rem 2.4rem;
     margin-bottom: 1.6rem;
-    background: linear-gradient(135deg, rgba(124,58,237,0.7), rgba(14,165,233,0.55));
-    box-shadow: 0 25px 70px rgba(15, 23, 42, 0.5);
+    background: linear-gradient(135deg, rgba(139,92,246,0.65) 0%, rgba(6,182,212,0.45) 100%);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
     animation: float 14s ease-in-out infinite;
 }
-.hero-card h1 { font-size: 2.1rem; margin: 0 0 0.3rem 0; }
-.hero-card p  { color: rgba(248,250,252,0.88); margin: 0 0 1rem 0; font-size: 1rem; }
+.hero-card h1 { 
+    font-size: 2.3rem; 
+    font-weight: 700;
+    margin: 0 0 0.4rem 0; 
+    letter-spacing: -0.02em;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.15);
+}
+.hero-card p  { 
+    color: rgba(248,250,252,0.9); 
+    margin: 0 0 0.8rem 0; 
+    font-size: 1.05rem; 
+    font-weight: 500;
+}
+
 /* Glass cards */
 .glass-card {
     background: var(--card-bg);
     border: 1px solid var(--card-border);
     border-radius: 18px;
-    padding: 1.4rem 1.6rem;
+    padding: 1.5rem 1.8rem;
     backdrop-filter: blur(14px);
-    box-shadow: 0 20px 50px rgba(2,6,23,0.5);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.3);
     margin-bottom: 1.2rem;
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
 }
+.glass-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 25px 55px rgba(139, 92, 246, 0.12);
+    border-color: rgba(139, 92, 246, 0.25);
+}
+
+/* Recent paths cards */
+.recent-path-card {
+    background: rgba(15, 23, 42, 0.3);
+    border: 1px solid rgba(148, 163, 184, 0.08);
+    border-radius: 14px;
+    padding: 1.1rem 1.4rem;
+    margin-bottom: 0.8rem;
+    transition: all 0.25s ease;
+}
+.recent-path-card:hover {
+    background: rgba(15, 23, 42, 0.45);
+    border-color: rgba(139, 92, 246, 0.2);
+}
+
 /* Integration chips */
 .int-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.5rem; }
 .int-chip {
     display: inline-flex; align-items: center; gap: 0.4rem;
-    padding: 0.45rem 1rem; border-radius: 999px; font-size: 0.88rem;
+    padding: 0.5rem 1.1rem; border-radius: 99px; font-size: 0.86rem;
     font-weight: 600; border: 1px solid transparent;
+    transition: all 0.25s ease;
 }
 .int-chip.connected {
-    background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.4); color: #86efac;
+    background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); color: #34d399;
 }
 .int-chip.disconnected {
-    background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.35); color: #fca5a5;
+    background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.25); color: #f87171;
 }
+
 /* Result chips */
 .result-chip {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    padding: 0.55rem 1.1rem; border-radius: 999px; font-size: 0.9rem;
-    font-weight: 600; border: 1px solid rgba(34,211,238,0.45);
-    background: rgba(34,211,238,0.1); color: #e0f2fe;
-    text-decoration: none; transition: all 0.2s;
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.55rem 1.2rem; border-radius: 99px; font-size: 0.9rem;
+    font-weight: 600; border: 1px solid rgba(6, 182, 212, 0.35);
+    background: rgba(6, 182, 212, 0.08); color: #e0f2fe;
+    text-decoration: none; transition: all 0.25s ease;
 }
-.result-chip:hover { border-color: rgba(124,58,237,0.55); background: rgba(124,58,237,0.18); }
+.result-chip:hover { 
+    border-color: rgba(139, 92, 246, 0.5); 
+    background: rgba(139, 92, 246, 0.16); 
+    transform: translateY(-1px);
+    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.15);
+}
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1rem 0; }
+
 /* Response block */
 .response-block {
-    background: rgba(15,23,42,0.5); border: 1px solid rgba(148,163,184,0.2);
-    border-radius: 16px; padding: 1.2rem 1.4rem; line-height: 1.7;
+    background: rgba(3, 7, 18, 0.25); 
+    border-radius: 14px; 
+    padding: 1.4rem; 
+    line-height: 1.8;
 }
+.response-block h1 {
+    font-size: 1.8rem !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    margin-top: 0.8rem !important;
+    margin-bottom: 1.2rem !important;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12) !important;
+    padding-bottom: 0.4rem !important;
+}
+.response-block h2 {
+    font-size: 1.4rem !important;
+    font-weight: 650 !important;
+    color: #c084fc !important;
+    margin-top: 1.6rem !important;
+    margin-bottom: 0.9rem !important;
+}
+.response-block h3 {
+    font-size: 1.15rem !important;
+    font-weight: 600 !important;
+    color: #22d3ee !important;
+    margin-top: 1.1rem !important;
+    margin-bottom: 0.7rem !important;
+}
+.response-block ul, .response-block ol {
+    margin-left: 1.3rem !important;
+    margin-bottom: 1rem !important;
+}
+.response-block li {
+    margin-bottom: 0.4rem !important;
+}
+.response-block strong {
+    color: #ffffff !important;
+}
+
 /* Sidebar card */
 .sb-card {
-    background: rgba(15,23,42,0.5); border: 1px solid rgba(148,163,184,0.2);
-    border-radius: 16px; padding: 1.1rem; margin-bottom: 1rem;
+    background: rgba(15,23,42,0.4); border: 1px solid rgba(148,163,184,0.08);
+    border-radius: 14px; padding: 1.1rem; margin-bottom: 1rem;
 }
+
+/* Inputs styling override */
+div[data-testid="stTextInput"] input, div[data-testid="stChatInput"] textarea {
+    background: rgba(3, 7, 18, 0.4) !important;
+    border: 1px solid rgba(148, 163, 184, 0.15) !important;
+    border-radius: 12px !important;
+    color: #f8fafc !important;
+    padding: 0.6rem 1rem !important;
+    transition: all 0.25s ease !important;
+}
+div[data-testid="stTextInput"] input:focus {
+    border-color: rgba(139, 92, 246, 0.5) !important;
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.2) !important;
+}
+
+/* Chat message override */
+div[data-testid="stChatMessage"] {
+    background: rgba(15, 23, 42, 0.35) !important;
+    border: 1px solid rgba(148, 163, 184, 0.08) !important;
+    border-radius: 14px !important;
+    margin-bottom: 0.8rem !important;
+    padding: 1rem !important;
+}
+
 /* Buttons */
 .stButton button {
-    border-radius: 999px; padding: 0.8rem 2rem;
-    background: linear-gradient(120deg, #7c3aed, #22d3ee);
-    border: none; color: #fff; font-weight: 600;
-    box-shadow: 0 12px 30px rgba(34,211,238,0.28);
+    border-radius: 99px; 
+    padding: 0.65rem 2rem;
+    background: linear-gradient(135deg, #8b5cf6 0%, #06b6d4 100%);
+    border: none; 
+    color: #fff; 
+    font-weight: 600;
+    font-size: 0.95rem;
+    box-shadow: 0 10px 25px rgba(139, 92, 246, 0.22);
+    transition: all 0.25s ease;
 }
+.stButton button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 15px 30px rgba(139, 92, 246, 0.35);
+    background: linear-gradient(135deg, #a78bfa 0%, #22d3ee 100%);
+}
+
+/* Secondary disconnect button styles */
+.stButton button[key*="disconnect"] {
+    background: rgba(239, 68, 68, 0.08) !important;
+    border: 1px solid rgba(239, 68, 68, 0.25) !important;
+    color: #f87171 !important;
+    box-shadow: none !important;
+    padding: 0.4rem 1rem !important;
+    font-size: 0.82rem !important;
+}
+.stButton button[key*="disconnect"]:hover {
+    background: rgba(239, 68, 68, 0.16) !important;
+    border-color: rgba(239, 68, 68, 0.4) !important;
+}
+
 /* Section label */
 .section-label {
-    margin: 1.6rem 0 0.5rem;
-    text-transform: uppercase; letter-spacing: 0.15em;
-    font-size: 0.85rem; color: #94a3b8;
+    margin: 2rem 0 0.6rem;
+    text-transform: uppercase; 
+    letter-spacing: 0.15em;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #64748b;
+    border-left: 3px solid var(--accent);
+    padding-left: 0.6rem;
 }
+
+/* Status strip */
 .status-strip {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -185,51 +347,61 @@ GLOBAL_CSS = """
     margin-bottom: 1.2rem;
 }
 .status-tile {
-    background: rgba(15,23,42,0.55);
-    border: 1px solid rgba(148,163,184,0.2);
+    background: rgba(15,23,42,0.4);
+    border: 1px solid rgba(148, 163, 184, 0.08);
     border-radius: 16px;
-    padding: 0.95rem 1rem;
-    box-shadow: 0 18px 35px rgba(2,6,23,0.35);
+    padding: 1rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
 }
 .status-tile .label {
     display: block;
-    font-size: 0.78rem;
+    font-size: 0.72rem;
+    font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #94a3b8;
-    margin-bottom: 0.35rem;
+    color: #64748b;
+    margin-bottom: 0.3rem;
 }
 .status-tile .value {
-    font-size: 1rem;
+    font-size: 1.05rem;
     font-weight: 700;
     color: #f8fafc;
 }
-@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
-@keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
 
+@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+
+/* Responsiveness overrides */
 @media (max-width: 900px) {
     .status-strip {
         grid-template-columns: 1fr;
+        gap: 0.8rem;
     }
     .hero-card {
-        padding: 1.5rem 1.3rem;
+        padding: 1.8rem;
+        margin-bottom: 1.2rem;
     }
     .hero-card h1 {
-        font-size: 1.7rem;
+        font-size: 1.8rem;
     }
     .glass-card,
     .sb-card {
-        padding: 1rem;
+        padding: 1.2rem;
     }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 480px) {
     [data-testid="stAppViewContainer"] {
-        font-size: 0.96rem;
+        font-size: 0.95rem;
+    }
+    .hero-card h1 {
+        font-size: 1.5rem;
+    }
+    .hero-card p {
+        font-size: 0.9rem;
     }
     .stButton button {
         width: 100%;
-        padding: 0.8rem 1rem;
+        padding: 0.7rem 1rem;
     }
     .chip-row {
         flex-direction: column;
@@ -358,39 +530,38 @@ with st.sidebar:
         chip_class = "connected" if connected else "disconnected"
         status_text = "Connected" if connected else "Not connected"
         st.markdown(
-            f"<div class='int-chip {chip_class}'>{icon} {label} — {status_text}</div>",
+            f"<div class='int-chip {chip_class}' style='width:100%; box-sizing:border-box;'>{icon} {label} — {status_text}</div>",
             unsafe_allow_html=True,
         )
-        cols = st.columns([1, 1])
         if not connected:
-            with cols[0]:
-                if st.button(f"Connect {label}", key=f"connect_{provider}"):
-                    try:
-                        # Build redirect URL back to this app with oauth_callback param
-                        app_url = os.getenv("APP_URL", "http://localhost:8501")
-                        # Include user email to preserve session on redirect
-                        user_email = user["email"]
-                        redirect = f"{app_url}?oauth_callback={provider}&login_email={user_email}"
-                        
-                        oauth_url = cc.get_oauth_url(user_id, provider, redirect_url=redirect)
-                        st.markdown(
-                            f"<a href='{oauth_url}' target='_self' "
-                            f"style='color:#22d3ee;text-decoration:underline;font-weight:bold;'>"
-                            f"Click here to authorise {label} →</a>",
-                            unsafe_allow_html=True,
-                        )
-                        st.caption("This will authorize connection in this tab and redirect you back automatically.")
-                        if provider == "googledrive":
-                            st.caption("⚠️ Note: Make sure to check the box for full Google Drive file write access on the Google permission page.")
-                        elif provider == "notion":
-                            st.caption("⚠️ Note: Make sure to select all pages you want the generator to access on the Notion permission page.")
-                    except Exception as e:
-                        st.error(f"Could not start OAuth for {label}: {e}")
+            if st.button(f"Connect {label}", key=f"connect_{provider}", use_container_width=True):
+                try:
+                    # Build redirect URL back to this app with oauth_callback param
+                    app_url = os.getenv("APP_URL", "http://localhost:8501")
+                    # Include user email to preserve session on redirect
+                    user_email = user["email"]
+                    redirect = f"{app_url}?oauth_callback={provider}&login_email={user_email}"
+                    
+                    oauth_url = cc.get_oauth_url(user_id, provider, redirect_url=redirect)
+                    st.markdown(
+                        f"<div style='margin-top: 5px; margin-bottom: 5px; text-align: center;'>"
+                        f"<a href='{oauth_url}' target='_self' "
+                        f"style='color:#22d3ee;text-decoration:underline;font-weight:bold;font-size:0.9rem;'>"
+                        f"Click here to authorise {label} →</a>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.caption("This will authorize connection in this tab and redirect you back automatically.")
+                    if provider == "googledrive":
+                        st.caption("⚠️ Note: Make sure to check the box for full Google Drive file write access on the Google permission page.")
+                    elif provider == "notion":
+                        st.caption("⚠️ Note: Make sure to select all pages you want the generator to access on the Notion permission page.")
+                except Exception as e:
+                    st.error(f"Could not start OAuth for {label}: {e}")
         else:
-            with cols[0]:
-                if st.button(f"Disconnect", key=f"disconnect_{provider}"):
-                    cc.disconnect(user_id, provider)
-                    st.rerun()
+            if st.button(f"Disconnect {label}", key=f"disconnect_{provider}", use_container_width=True):
+                cc.disconnect(user_id, provider)
+                st.rerun()
             
             if provider == "notion":
                 current_parent_id = db.get_notion_parent_id(user_id) or ""
@@ -675,31 +846,34 @@ recent_paths = db.get_user_paths(user_id, limit=5)
 if recent_paths:
     with st.expander("📋 Recent Learning Paths"):
         for path in recent_paths:
-            col1, col2, col3 = st.columns([3, 2, 1])
-            with col1:
-                st.write(path["goal"])
-            with col2:
-                links = []
-                if path.get("playlist_url"):
-                    links.append(f"[Playlist]({path['playlist_url']})")
-                if path.get("google_doc_url"):
-                    links.append(f"[Doc]({path['google_doc_url']})")
-                if path.get("notion_url"):
-                    links.append(f"[Notion]({path['notion_url']})")
-                if links:
-                    st.markdown(" | ".join(links))
-                else:
-                    st.caption("No export links")
-            with col3:
-                if st.button("👁️ View Plan", key=f"view_path_{path['id']}", use_container_width=True):
-                    st.session_state.generation_result = {
-                        "lp": None,
-                        "markdown": path.get("markdown") or f"# Learning Path: {path['goal']}\n\n*Plan details not available. Please generate a new path to view full details.*",
-                        "actions": {},
-                        "playlist_url": path.get("playlist_url"),
-                        "doc_url": path.get("google_doc_url"),
-                        "notion_url": path.get("notion_url"),
-                    }
-                    st.session_state.pending_goal = path["goal"]
-                    st.rerun()
-                st.caption(f"Generated: {path['created_at'][:10]}")
+            with st.container():
+                st.markdown("<div class='recent-path-card'>", unsafe_allow_html=True)
+                col1, col2, col3 = st.columns([2.5, 2, 1.2])
+                with col1:
+                    st.markdown(f"**🎯 Goal:**  \n{path['goal']}")
+                with col2:
+                    links = []
+                    if path.get("playlist_url"):
+                        links.append(f"[📺 YouTube Playlist]({path['playlist_url']})")
+                    if path.get("google_doc_url"):
+                        links.append(f"[📄 Google Doc]({path['google_doc_url']})")
+                    if path.get("notion_url"):
+                        links.append(f"[📝 Notion Page]({path['notion_url']})")
+                    if links:
+                        st.markdown("  \n".join(links))
+                    else:
+                        st.caption("No export links generated")
+                with col3:
+                    if st.button("👁️ View Plan", key=f"view_path_{path['id']}", use_container_width=True):
+                        st.session_state.generation_result = {
+                            "lp": None,
+                            "markdown": path.get("markdown") or f"# Learning Path: {path['goal']}\n\n*Plan details not available. Please generate a new path to view full details.*",
+                            "actions": {},
+                            "playlist_url": path.get("playlist_url"),
+                            "doc_url": path.get("google_doc_url"),
+                            "notion_url": path.get("notion_url"),
+                        }
+                        st.session_state.pending_goal = path["goal"]
+                        st.rerun()
+                    st.caption(f"<div style='text-align:center; margin-top:0.2rem;'>📅 {path['created_at'][:10]}</div>", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)

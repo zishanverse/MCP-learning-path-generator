@@ -17,6 +17,8 @@ import streamlit as st
 from dotenv import load_dotenv
 
 import db
+import datetime
+from streamlit_cookies_controller import CookieController
 
 load_dotenv()
 
@@ -41,6 +43,17 @@ def require_login() -> dict:
     """
     _maybe_dev_autologin()
     
+    # Try restoring session from browser cookie
+    if get_current_user() is None:
+        try:
+            controller = CookieController()
+            saved_email = controller.get("auth_user_email")
+            if saved_email:
+                user = db.get_or_create_user(saved_email)
+                st.session_state[_SESSION_KEY] = user
+        except Exception:
+            pass
+    
     # Auto-login from query parameter if user session is lost
     params = st.query_params
     if get_current_user() is None and "login_email" in params:
@@ -48,6 +61,14 @@ def require_login() -> dict:
         try:
             user = db.get_or_create_user(email)
             st.session_state[_SESSION_KEY] = user
+            
+            # Save to cookie for 30 days
+            try:
+                controller = CookieController()
+                expires = datetime.datetime.now() + datetime.timedelta(days=30)
+                controller.set("auth_user_email", email, expires=expires)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -61,6 +82,11 @@ def require_login() -> dict:
 def logout() -> None:
     """Clear the current session."""
     st.session_state.pop(_SESSION_KEY, None)
+    try:
+        controller = CookieController()
+        controller.remove("auth_user_email")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +106,25 @@ def _maybe_dev_autologin() -> None:
 def _do_login(email: str) -> None:
     """Validate email, create/fetch user, store in session."""
     email = email.strip().lower()
-    if not email or "@" not in email:
-        st.error("Please enter a valid email address.")
+    
+    # Robust RFC 5322 compliant regex for email validation
+    import re
+    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if not email or not re.match(email_regex, email):
+        st.error("Please enter a valid email address (e.g. name@example.com).")
         return
+        
     user = db.get_or_create_user(email)
     st.session_state[_SESSION_KEY] = user
+    
+    # Save to cookie for 30 days
+    try:
+        controller = CookieController()
+        expires = datetime.datetime.now() + datetime.timedelta(days=30)
+        controller.set("auth_user_email", email, expires=expires)
+    except Exception:
+        pass
+        
     st.rerun()
 
 
@@ -93,30 +133,56 @@ def _login_ui() -> None:
     st.markdown(
         """
         <style>
-        .login-wrapper {
-            max-width: 420px;
-            margin: 8rem auto 0 auto;
+        .login-card {
+            max-width: 480px;
+            margin: 6rem auto 1.5rem auto;
+            padding: 2.5rem;
+            background: rgba(15, 23, 42, 0.65);
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            border-radius: 24px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45), 0 0 40px rgba(139, 92, 246, 0.1);
             text-align: center;
         }
-        .login-wrapper h2 {
-            font-size: 1.8rem;
-            margin-bottom: 0.4rem;
+        .login-card h2 {
+            font-size: 1.9rem;
+            font-weight: 700;
+            margin: 0 0 0.6rem 0;
+            background: linear-gradient(135deg, #a78bfa 0%, #22d3ee 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
-        .login-wrapper p {
-            color: rgba(226,232,240,0.7);
-            margin-bottom: 1.8rem;
+        .login-card p {
+            color: rgba(248, 250, 252, 0.7);
+            margin: 0;
             font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        /* Style text input inside login flow */
+        div[data-testid="stTextInput"] input {
+            background: rgba(3, 7, 18, 0.45) !important;
+            border: 1px solid rgba(148, 163, 184, 0.15) !important;
+            border-radius: 99px !important;
+            color: #f8fafc !important;
+            padding: 0.65rem 1.4rem !important;
+            font-size: 0.95rem !important;
+            text-align: center !important;
+            transition: all 0.25s ease !important;
+        }
+        div[data-testid="stTextInput"] input:focus {
+            border-color: rgba(139, 92, 246, 0.5) !important;
+            box-shadow: 0 0 15px rgba(139, 92, 246, 0.2) !important;
         }
         </style>
-        <div class="login-wrapper">
+        <div class="login-card">
             <h2>🧭 Learning Path Generator</h2>
-            <p>Sign in to connect your accounts and generate personalised learning paths.</p>
+            <p>Enter your email below to start generating personalized learning paths, Google docs, and playlists.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 1.8, 1])
     with col2:
         email = st.text_input(
             "Email address",
@@ -124,6 +190,6 @@ def _login_ui() -> None:
             key="login_email_input",
             label_visibility="collapsed",
         )
-        if st.button("Continue →", use_container_width=True, type="primary"):
+        if st.button("Get Started →", use_container_width=True, type="primary"):
             _do_login(email)
-        st.caption("No password required during preview. Your email is your identity.")
+        st.caption("<div style='text-align:center; color:#64748b; margin-top:0.4rem;'>No password required during preview. Your email is your unique identity.</div>", unsafe_allow_html=True)
