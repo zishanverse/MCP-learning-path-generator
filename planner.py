@@ -19,6 +19,7 @@ import re
 from typing import Any, Callable, Optional
 
 from dotenv import load_dotenv
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import ValidationError
@@ -32,10 +33,26 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 def _build_llm(model_name: str = "gemini-2.5-flash") -> Any:
-    api_key = os.getenv("GOOGLE_API_KEY", "").strip()
-    if not api_key:
-        raise EnvironmentError("GOOGLE_API_KEY is not set.")
-    return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
+    if "/" in model_name:
+        # It's a Hugging Face model
+        hf_token = os.getenv("HF_API_KEY", "").strip()
+        if not hf_token:
+            raise EnvironmentError("HF_API_KEY is not set in the environment.")
+        from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+        llm = HuggingFaceEndpoint(
+            repo_id=model_name,
+            huggingfacehub_api_token=hf_token,
+            temperature=0.7,
+            max_new_tokens=2048,
+            task="conversational",
+        )
+        return ChatHuggingFace(llm=llm)
+    else:
+        # It's a Google Gemini model
+        api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            raise EnvironmentError("GOOGLE_API_KEY is not set.")
+        return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +209,10 @@ def generate(
 
     # --- Initial generation ---
     prompt = _build_generation_prompt(user_goal, desired_days)
-    response = llm.invoke([HumanMessage(content=prompt)])
+    if isinstance(llm, BaseChatModel):
+        response = llm.invoke([HumanMessage(content=prompt)])
+    else:
+        response = llm.invoke(prompt)
     raw_text = _llm_response_to_text(response)
     first_lp = _parse_learning_path(raw_text, user_goal, desired_days)
 
@@ -216,7 +236,10 @@ def generate(
         _progress(f"Requesting continuation: Day {start_day}–{end_day} (attempt {iteration})…")
 
         cont_prompt = _build_continuation_prompt(user_goal, start_day, end_day)
-        cont_resp = llm.invoke([HumanMessage(content=cont_prompt)])
+        if isinstance(llm, BaseChatModel):
+            cont_resp = llm.invoke([HumanMessage(content=cont_prompt)])
+        else:
+            cont_resp = llm.invoke(cont_prompt)
         cont_text = _llm_response_to_text(cont_resp)
         cont_lp = _parse_learning_path(cont_text, user_goal, end_day - start_day + 1)
 

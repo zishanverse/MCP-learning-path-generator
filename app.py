@@ -503,6 +503,8 @@ with st.sidebar:
     available_models = {
         "Gemini 2.5 Flash": "gemini-2.5-flash",
         "Gemini 1.5 Pro": "gemini-1.5-pro-latest",
+        "Mistral 7B Instruct (HF)": "mistralai/Mistral-7B-Instruct-v0.2",
+        "Llama 3 8B Instruct (HF)": "NousResearch/Meta-Llama-3-8B-Instruct",
     }
     selected_model_label = st.selectbox(
         "Select model",
