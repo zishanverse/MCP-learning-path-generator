@@ -411,6 +411,94 @@ div[data-testid="stChatMessage"] {
         justify-content: center;
     }
 }
+
+/* Disable default Streamlit fading during rerun */
+div[data-testid="stAppViewBlockContainer"] {
+    opacity: 1 !important;
+}
+
+/* Custom Loader Overlay */
+.custom-loader-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(3, 7, 18, 0.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 999999;
+}
+.custom-loader-card {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 24px;
+    padding: 2.5rem 2rem;
+    text-align: center;
+    box-shadow: 0 30px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+    max-width: 420px;
+    width: 90%;
+    animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.spinner-ring {
+    width: 56px;
+    height: 56px;
+    border: 4px solid rgba(139, 92, 246, 0.15);
+    border-top: 4px solid #8b5cf6;
+    border-radius: 50%;
+    margin: 0 auto 1.5rem;
+    animation: spin 0.8s linear infinite;
+}
+.loader-steps {
+    list-style-type: none !important;
+    padding-left: 0 !important;
+    margin: 0 auto !important;
+    max-width: 320px;
+    text-align: left;
+}
+.loader-steps li {
+    color: rgba(148, 163, 184, 0.6);
+    font-size: 0.88rem;
+    margin-bottom: 0.45rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    line-height: 1.4;
+}
+.loader-steps li::before {
+    content: "✓";
+    color: #10b981;
+    font-weight: bold;
+}
+.loader-steps li:last-child {
+    color: #22d3ee;
+    font-weight: 600;
+    animation: pulse 1.5s infinite;
+}
+.loader-steps li:last-child::before {
+    content: "●";
+    color: #22d3ee;
+    animation: blink 1s infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+@keyframes scaleUp {
+    from { transform: scale(0.96); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
 </style>
 """
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
@@ -663,93 +751,107 @@ if st.button(
 
     def _progress(msg: str) -> None:
         steps.append(msg)
+        steps_html = "".join([f"<li>{s}</li>" for s in steps[-5:]])
         progress_placeholder.markdown(
-            "\n".join([f"- {s}" for s in steps[-5:]]),
+            f"""
+            <div class="custom-loader-overlay">
+                <div class="custom-loader-card">
+                    <div class="spinner-ring"></div>
+                    <h3 style="color:#ffffff; margin-top:0; margin-bottom:1.2rem; font-weight:700; font-size:1.35rem; letter-spacing:-0.02em;">🧭 Designing Your Path</h3>
+                    <ul class="loader-steps">
+                        {steps_html}
+                    </ul>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
+    # Trigger initial loader state immediately
+    _progress(f"Initializing with {selected_model_label}…")
+
     try:
-        with st.spinner(f"Generating with {selected_model_label}…"):
-            # --- Planning layer ---
-            learning_path = generate_path(
-                user_goal=user_goal,
-                model_name=selected_model,
-                progress_callback=_progress,
-            )
+        # --- Planning layer ---
+        learning_path = generate_path(
+            user_goal=user_goal,
+            model_name=selected_model,
+            progress_callback=_progress,
+        )
 
-            # --- Video validation ---
-            valid_ids = []
-            if conn_status.get("youtube"):
-                _progress("Extracting and validating YouTube video IDs…")
-                raw_ids = extract_video_ids_from_learning_path(learning_path)
-                if raw_ids:
-                    valid_ids, invalid_ids = filter_available_videos(raw_ids)
-                    if invalid_ids:
-                        _progress(f"Filtered {len(invalid_ids)} unavailable video(s).")
-                else:
-                    _progress("No YouTube video IDs found in generated content.")
+        # --- Video validation ---
+        valid_ids = []
+        if conn_status.get("youtube"):
+            _progress("Extracting and validating YouTube video IDs…")
+            raw_ids = extract_video_ids_from_learning_path(learning_path)
+            if raw_ids:
+                valid_ids, invalid_ids = filter_available_videos(raw_ids)
+                if invalid_ids:
+                    _progress(f"Filtered {len(invalid_ids)} unavailable video(s).")
+            else:
+                _progress("No YouTube video IDs found in generated content.")
 
-            # --- Generate Markdown with updated URLs ---
-            _progress("Converting to markdown…")
-            markdown_text = learning_path_to_markdown(learning_path)
+        # --- Generate Markdown with updated URLs ---
+        _progress("Converting to markdown…")
+        markdown_text = learning_path_to_markdown(learning_path)
 
-            # --- Action layer ---
-            _progress("Running post-generation actions…")
-            action_results = run_post_generation_actions(
-                user_id=user_id,
-                goal=user_goal,
-                markdown=markdown_text,
-                video_ids=valid_ids,
-                connection_status=conn_status,
-                progress_callback=_progress,
-            )
+        # --- Action layer ---
+        _progress("Running post-generation actions…")
+        action_results = run_post_generation_actions(
+            user_id=user_id,
+            goal=user_goal,
+            markdown=markdown_text,
+            video_ids=valid_ids,
+            connection_status=conn_status,
+            progress_callback=_progress,
+        )
 
-            # --- Rebuild markdown with real URLs ---
-            playlist_url = None
-            doc_url = None
-            notion_url = None
+        # --- Rebuild markdown with real URLs ---
+        playlist_url = None
+        doc_url = None
+        notion_url = None
 
-            def _action_success(name: str) -> bool:
-                action = action_results.get(name) or {}
-                return bool(action.get("success"))
+        def _action_success(name: str) -> bool:
+            action = action_results.get(name) or {}
+            return bool(action.get("success"))
 
-            if _action_success("playlist"):
-                playlist_url = (action_results.get("playlist") or {}).get("playlist_url")
-                _progress(f"Playlist created: {playlist_url}")
+        if _action_success("playlist"):
+            playlist_url = (action_results.get("playlist") or {}).get("playlist_url")
+            _progress(f"Playlist created: {playlist_url}")
 
-            if _action_success("google_doc"):
-                doc_url = (action_results.get("google_doc") or {}).get("doc_url")
-                _progress(f"Google Doc created: {doc_url}")
+        if _action_success("google_doc"):
+            doc_url = (action_results.get("google_doc") or {}).get("doc_url")
+            _progress(f"Google Doc created: {doc_url}")
 
-            if _action_success("notion_page"):
-                notion_url = (action_results.get("notion_page") or {}).get("page_url")
-                _progress(f"Notion page created: {notion_url}")
+        if _action_success("notion_page"):
+            notion_url = (action_results.get("notion_page") or {}).get("page_url")
+            _progress(f"Notion page created: {notion_url}")
 
-            final_markdown = learning_path_to_markdown(
-                learning_path,
-                playlist_url=playlist_url,
-                doc_url=doc_url,
-                notion_url=notion_url,
-            )
+        final_markdown = learning_path_to_markdown(
+            learning_path,
+            playlist_url=playlist_url,
+            doc_url=doc_url,
+            notion_url=notion_url,
+        )
 
-            # --- Persist to DB ---
-            db.save_learning_path(
-                user_id=user_id,
-                goal=user_goal,
-                playlist_url=playlist_url,
-                google_doc_url=doc_url,
-                notion_url=notion_url,
-                markdown=final_markdown,
-            )
+        # --- Persist to DB ---
+        db.save_learning_path(
+            user_id=user_id,
+            goal=user_goal,
+            playlist_url=playlist_url,
+            google_doc_url=doc_url,
+            notion_url=notion_url,
+            markdown=final_markdown,
+        )
 
-            st.session_state.generation_result = {
-                "lp": learning_path,
-                "markdown": final_markdown,
-                "actions": action_results,
-                "playlist_url": playlist_url,
-                "doc_url": doc_url,
-                "notion_url": notion_url,
-            }
-            _progress("✅ All done!")
+        st.session_state.generation_result = {
+            "lp": learning_path,
+            "markdown": final_markdown,
+            "actions": action_results,
+            "playlist_url": playlist_url,
+            "doc_url": doc_url,
+            "notion_url": notion_url,
+        }
+        _progress("✅ All done!")
 
     except Exception as e:
         st.error(f"Generation failed: {e}")
