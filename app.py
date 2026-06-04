@@ -18,7 +18,6 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
-import importlib
 import auth
 import composio_client as cc
 import db
@@ -26,14 +25,6 @@ import actions
 import planner
 import schemas
 import utils
-
-importlib.reload(auth)
-importlib.reload(cc)
-importlib.reload(db)
-importlib.reload(actions)
-importlib.reload(planner)
-importlib.reload(schemas)
-importlib.reload(utils)
 
 from actions import run_post_generation_actions
 from planner import generate as generate_path
@@ -119,7 +110,23 @@ GLOBAL_CSS = """
 /* Hide Streamlit brand elements */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {visibility: hidden;}
+
+/* Keep header visible on mobile for the hamburger menu */
+@media (min-width: 901px) {
+    header {visibility: hidden;}
+}
+@media (max-width: 900px) {
+    header {
+        background: transparent !important;
+    }
+    .stDeployButton {
+        display: none !important;
+    }
+    /* Enhance mobile sidebar overlay */
+    [data-testid="stSidebar"] {
+        box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+    }
+}
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
@@ -565,8 +572,6 @@ with st.sidebar:
     st.caption(user["email"])
     if st.button("Sign out", key="signout_btn"):
         with st.spinner("Signing out..."):
-            import time
-            time.sleep(0.5)
             auth.logout()
             st.rerun()
 

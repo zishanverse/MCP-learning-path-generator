@@ -150,8 +150,6 @@ def _do_login(email: str, password: str) -> None:
         return
         
     with st.spinner("Logging in..."):
-        import time
-        time.sleep(0.6)
         _set_session_and_rerun(user)
 
 
@@ -175,8 +173,6 @@ def _do_signup(email: str, name: str, password: str, confirm_password: str) -> N
     with st.spinner("Creating account..."):
         hashed = hash_password(password)
         user = db.get_or_create_user(email, name=name, hashed_password=hashed)
-        import time
-        time.sleep(0.6)
         _set_session_and_rerun(user)
 
 
