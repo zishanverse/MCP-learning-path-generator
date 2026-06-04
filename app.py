@@ -43,6 +43,33 @@ from utils import extract_video_ids_from_text, filter_available_videos, extract_
 load_dotenv()
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def sanitize_notion_page_id(page_id: str) -> str:
+    """Extract a 32-character hex ID (with or without dashes) from user input."""
+    if not page_id:
+        return ""
+    page_id = page_id.strip()
+    
+    # Try matching standard UUID format (8-4-4-4-12 hex chars)
+    import re
+    uuid_match = re.search(
+        r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+        page_id,
+        re.IGNORECASE
+    )
+    if uuid_match:
+        return uuid_match.group(1)
+        
+    # Match 32 hex characters in the string (common in Notion URLs)
+    hex32_match = re.search(r"([0-9a-f]{32})", page_id, re.IGNORECASE)
+    if hex32_match:
+        return hex32_match.group(1)
+        
+    return page_id
+
+# ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 
@@ -341,14 +368,18 @@ with st.sidebar:
                     try:
                         # Build redirect URL back to this app with oauth_callback param
                         app_url = os.getenv("APP_URL", "http://localhost:8501")
-                        redirect = f"{app_url}?oauth_callback={provider}"
+                        # Include user email to preserve session on redirect
+                        user_email = user["email"]
+                        redirect = f"{app_url}?oauth_callback={provider}&login_email={user_email}"
+                        
                         oauth_url = cc.get_oauth_url(user_id, provider, redirect_url=redirect)
                         st.markdown(
-                            f"<a href='{oauth_url}' target='_blank' "
-                            f"style='color:#22d3ee;text-decoration:underline;'>"
+                            f"<a href='{oauth_url}' target='_self' "
+                            f"style='color:#22d3ee;text-decoration:underline;font-weight:bold;'>"
                             f"Click here to authorise {label} →</a>",
                             unsafe_allow_html=True,
                         )
+                        st.caption("This will authorize connection in this tab and redirect you back automatically.")
                         if provider == "googledrive":
                             st.caption("⚠️ Note: Make sure to check the box for full Google Drive file write access on the Google permission page.")
                         elif provider == "notion":
@@ -369,8 +400,10 @@ with st.sidebar:
                     key="notion_parent_id_input",
                     help="Open any Notion page in your browser and copy the 32-character ID from the URL. This is required because Notion does not allow creating pages at the root level."
                 )
-                if new_parent_id != current_parent_id:
-                    db.save_notion_parent_id(user_id, new_parent_id)
+                sanitized_parent_id = sanitize_notion_page_id(new_parent_id)
+                if sanitized_parent_id != current_parent_id:
+                    db.save_notion_parent_id(user_id, sanitized_parent_id)
+                    st.rerun()
         st.markdown("<br>", unsafe_allow_html=True)
 
     st.divider()
@@ -471,15 +504,16 @@ if st.button(
             )
 
             # --- Video validation ---
-            _progress("Extracting and validating YouTube video IDs…")
-            raw_ids = extract_video_ids_from_learning_path(learning_path)
-            if raw_ids:
-                valid_ids, invalid_ids = filter_available_videos(raw_ids)
-                if invalid_ids:
-                    _progress(f"Filtered {len(invalid_ids)} unavailable video(s).")
-            else:
-                valid_ids = []
-                _progress("No YouTube video IDs found in generated content.")
+            valid_ids = []
+            if conn_status.get("youtube"):
+                _progress("Extracting and validating YouTube video IDs…")
+                raw_ids = extract_video_ids_from_learning_path(learning_path)
+                if raw_ids:
+                    valid_ids, invalid_ids = filter_available_videos(raw_ids)
+                    if invalid_ids:
+                        _progress(f"Filtered {len(invalid_ids)} unavailable video(s).")
+                else:
+                    _progress("No YouTube video IDs found in generated content.")
 
             # --- Generate Markdown with updated URLs ---
             _progress("Converting to markdown…")
@@ -493,6 +527,7 @@ if st.button(
                 markdown=markdown_text,
                 video_ids=valid_ids,
                 connection_status=conn_status,
+                progress_callback=_progress,
             )
 
             # --- Rebuild markdown with real URLs ---
@@ -530,6 +565,7 @@ if st.button(
                 playlist_url=playlist_url,
                 google_doc_url=doc_url,
                 notion_url=notion_url,
+                markdown=final_markdown,
             )
 
             st.session_state.generation_result = {
@@ -586,7 +622,17 @@ if result:
         action = actions.get(key)
         if action and not action.get("success") and action.get("error"):
             err_msg = action["error"]
-            if "insufficient authentication scopes" in err_msg.lower() or "permission" in err_msg.lower() or "forbidden" in err_msg.lower() or "scope" in err_msg.lower():
+            err_msg_lower = err_msg.lower()
+            if key == "notion_page" and ("parent id" in err_msg_lower or "no page or database" in err_msg_lower or "not found" in err_msg_lower or "uuid" in err_msg_lower):
+                st.error(
+                    f"🔴 **Notion Parent Page Error**: Parent page not found or inaccessible.\n\n"
+                    f"**Details**: `{err_msg}`\n\n"
+                    f"**How to fix this:**\n"
+                    f"1. **Share the Page with Integration**: Open the page you want to use as parent in Notion, click the **Share** button in the top-right corner, and verify that the integration (Composio or Learning Path Generator) is selected/added as a connection.\n"
+                    f"2. **Check Parent ID**: Make sure the Parent Page ID entered in the sidebar is correct. You can copy the entire URL of the Notion page and paste it into the sidebar input field; the app will automatically extract the ID.\n"
+                    f"3. **Reconnect Notion**: If the page is still not found, disconnect and reconnect Notion in the sidebar, ensuring you select the correct workspace and check the boxes for the pages you want the generator to access."
+                )
+            elif "insufficient authentication scopes" in err_msg_lower or "permission" in err_msg_lower or "forbidden" in err_msg_lower or "scope" in err_msg_lower:
                 if key == "google_doc":
                     st.error(
                         f"🔴 **Google Doc Integration Error**: Insufficient Permissions.\n\n"
@@ -642,5 +688,18 @@ if recent_paths:
                     links.append(f"[Notion]({path['notion_url']})")
                 if links:
                     st.markdown(" | ".join(links))
+                else:
+                    st.caption("No export links")
             with col3:
-                st.caption(path["created_at"][:10])
+                if st.button("👁️ View Plan", key=f"view_path_{path['id']}", use_container_width=True):
+                    st.session_state.generation_result = {
+                        "lp": None,
+                        "markdown": path.get("markdown") or f"# Learning Path: {path['goal']}\n\n*Plan details not available. Please generate a new path to view full details.*",
+                        "actions": {},
+                        "playlist_url": path.get("playlist_url"),
+                        "doc_url": path.get("google_doc_url"),
+                        "notion_url": path.get("notion_url"),
+                    }
+                    st.session_state.pending_goal = path["goal"]
+                    st.rerun()
+                st.caption(f"Generated: {path['created_at'][:10]}")

@@ -349,6 +349,7 @@ def run_post_generation_actions(
     markdown: str,
     video_ids: list[str],
     connection_status: dict[str, bool],
+    progress_callback=None,
 ) -> dict:
     """Run all connected post-generation actions for a user.
 
@@ -361,6 +362,7 @@ def run_post_generation_actions(
         markdown:          The full markdown learning path.
         video_ids:         Validated YouTube video IDs to add to playlist.
         connection_status: Dict from composio_client.get_connection_status().
+        progress_callback: Optional callable to report progress steps back to the UI.
 
     Returns:
         {
@@ -377,6 +379,8 @@ def run_post_generation_actions(
     title = f"{goal} — Learning Path"
 
     if connection_status.get("youtube") and video_ids:
+        if progress_callback:
+            progress_callback("Creating YouTube playlist…")
         results["playlist"] = create_youtube_playlist(
             user_id=user_id,
             video_ids=video_ids,
@@ -384,6 +388,8 @@ def run_post_generation_actions(
         )
 
     if connection_status.get("googledrive"):
+        if progress_callback:
+            progress_callback("Creating Google Doc…")
         results["google_doc"] = create_google_doc(
             user_id=user_id,
             title=title,
@@ -391,6 +397,8 @@ def run_post_generation_actions(
         )
 
     if connection_status.get("notion"):
+        if progress_callback:
+            progress_callback("Creating Notion page…")
         results["notion_page"] = create_notion_page(
             user_id=user_id,
             title=title,

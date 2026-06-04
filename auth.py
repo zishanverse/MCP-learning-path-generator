@@ -40,6 +40,17 @@ def require_login() -> dict:
     Returns the user dict when logged in.
     """
     _maybe_dev_autologin()
+    
+    # Auto-login from query parameter if user session is lost
+    params = st.query_params
+    if get_current_user() is None and "login_email" in params:
+        email = params["login_email"]
+        try:
+            user = db.get_or_create_user(email)
+            st.session_state[_SESSION_KEY] = user
+        except Exception:
+            pass
+
     user = get_current_user()
     if user is None:
         _login_ui()

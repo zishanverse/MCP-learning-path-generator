@@ -85,6 +85,7 @@ class LearningPathRecord(Base):
     playlist_url = Column(String, nullable=True)
     google_doc_url = Column(String, nullable=True)
     notion_url = Column(String, nullable=True)
+    markdown = Column(String, nullable=True)
     created_at = Column(DateTime, default=_now, nullable=False)
 
     def to_dict(self):
@@ -95,6 +96,7 @@ class LearningPathRecord(Base):
             "playlist_url": self.playlist_url,
             "google_doc_url": self.google_doc_url,
             "notion_url": self.notion_url,
+            "markdown": self.markdown,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }
 
@@ -115,6 +117,35 @@ def init_db() -> None:
             conn.commit()
     except Exception:
         pass  # Column already exists — safe to ignore
+
+    # Migration: add google_doc_url and notion_url columns to learning_paths if they don't exist
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE learning_paths ADD COLUMN google_doc_url VARCHAR"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE learning_paths ADD COLUMN notion_url VARCHAR"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+
+    # Migration: add markdown column to learning_paths if it doesn't exist
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE learning_paths ADD COLUMN markdown TEXT"
+            ))
+            conn.commit()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +261,7 @@ def save_learning_path(
     playlist_url: Optional[str] = None,
     google_doc_url: Optional[str] = None,
     notion_url: Optional[str] = None,
+    markdown: Optional[str] = None,
 ) -> int:
     with SessionLocal() as session:
         lp = LearningPathRecord(
@@ -238,6 +270,7 @@ def save_learning_path(
             playlist_url=playlist_url,
             google_doc_url=google_doc_url,
             notion_url=notion_url,
+            markdown=markdown,
         )
         session.add(lp)
         session.commit()
