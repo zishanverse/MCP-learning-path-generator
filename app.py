@@ -539,7 +539,24 @@ def _handle_oauth_callback() -> None:
 # Ensure DB is initialised on every cold start
 # ---------------------------------------------------------------------------
 
-db.init_db()
+try:
+    db.init_db()
+except Exception as e:
+    st.error("❌ **Database Connection Error**")
+    st.markdown(
+        """
+        The application failed to initialize the database connection.
+        
+        ### 🛠️ Troubleshooting Steps:
+        1. **Check Environment Variables / Secrets**: Ensure that `DATABASE_URL` is correctly configured in your Streamlit Cloud settings (or `.env` file for local development).
+        2. **Database Accessibility**: Verify that your database is running and accepting remote connections. If you use a cloud database (like Neon or Supabase), ensure that any firewall or IP restrictions are configured to allow traffic from Streamlit.
+        3. **SSL Requirements**: If your database requires SSL (e.g., Neon/Supabase), ensure your connection string supports it (this application automatically appends `sslmode=require` if not specified).
+        """
+    )
+    with st.expander("🔍 Show Detailed Error Logs (Traceback)"):
+        import traceback
+        st.code(traceback.format_exc())
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # Auth gate — must be logged in to proceed
@@ -703,6 +720,17 @@ if not any_connected:
         "👈 Connect at least one integration in the sidebar to enable automatic playlist "
         "and document creation. You can still generate a learning path without any integrations."
     )
+
+if getattr(db, "using_fallback_db", False):
+    st.warning(
+        "⚠️ **Database Fallback Mode**: The application failed to connect to the configured PostgreSQL database. "
+        "It has successfully fallen back to a local SQLite database (`app_fallback.db`).\n\n"
+        "**Note**: Any data saved while in fallback mode is stored locally in the container and will be lost when the container restarts. "
+        "To get persistent storage back, please check your `DATABASE_URL` setting."
+    )
+    with st.expander("🔍 Show Database Connection Error Details"):
+        st.code(getattr(db, "fallback_error_message", "Unknown database error"))
+
 
 # ---------------------------------------------------------------------------
 # Goal builder chat

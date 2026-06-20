@@ -31,6 +31,17 @@ if _DB_URL.startswith("postgresql://") and "psycopg2" not in _DB_URL:
     # Use standard psycopg2 driver if postgresql is specified without driver
     pass
 
+# Ensure SSL mode is enabled by default for PostgreSQL on cloud deployments.
+# This prevents OperationalError when connecting to secure managed databases (e.g. Neon, Supabase).
+scheme = _DB_URL.split("://")[0] if "://" in _DB_URL else ""
+is_postgres = "postgres" in scheme or "postgresql" in scheme
+
+if is_postgres and "sslmode" not in _DB_URL:
+    if "?" in _DB_URL:
+        _DB_URL += "&sslmode=require"
+    else:
+        _DB_URL += "?sslmode=require"
+
 # Engine configuration
 connect_args = {}
 if _DB_URL.startswith("sqlite"):
@@ -39,6 +50,9 @@ if _DB_URL.startswith("sqlite"):
 engine = create_engine(_DB_URL, connect_args=connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+using_fallback_db = False
+fallback_error_message = None
 
 # ---------------------------------------------------------------------------
 # Schema Definitions
@@ -110,7 +124,28 @@ class LearningPathRecord(Base):
 
 def init_db() -> None:
     """Create all tables if they don't already exist."""
-    Base.metadata.create_all(bind=engine)
+    global engine, SessionLocal, using_fallback_db, fallback_error_message
+    
+    try:
+        # Try to initialize with the configured engine
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        # If it failed and we are already using sqlite, propagate error
+        if _DB_URL.startswith("sqlite"):
+            raise e
+            
+        # Fall back to SQLite
+        using_fallback_db = True
+        fallback_error_message = str(e)
+        
+        # Configure fallback sqlite engine
+        fallback_url = "sqlite:///./app_fallback.db"
+        connect_args_fallback = {"check_same_thread": False}
+        engine = create_engine(fallback_url, connect_args=connect_args_fallback, pool_pre_ping=True)
+        SessionLocal.configure(bind=engine)
+        
+        # Initialize the fallback database
+        Base.metadata.create_all(bind=engine)
     
     # Migration: add hashed_password column to users
     try:
@@ -340,3 +375,10 @@ def get_user_paths(user_id: int, limit: int = 20) -> list[dict]:
             LearningPathRecord.user_id == user_id
         ).order_by(LearningPathRecord.created_at.desc()).limit(limit).all()
         return [p.to_dict() for p in paths]
+
+
+# Auto-initialize database on import so connection/fallback checks are ran immediately
+try:
+    init_db()
+except Exception:
+    pass
