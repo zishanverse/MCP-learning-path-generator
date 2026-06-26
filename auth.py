@@ -41,6 +41,29 @@ def require_login() -> dict:
     Call this at the top of any page that requires authentication.
     Returns the user dict when logged in.
     """
+    # Try restoring session from query parameters (specifically for OAuth redirects/callbacks or login reruns)
+    if get_current_user() is None:
+        try:
+            token_from_url = st.query_params.get("session_token")
+            if token_from_url:
+                user = db.get_user_by_session_token(token_from_url)
+                if user:
+                    st.session_state[_SESSION_KEY] = user
+                    try:
+                        controller = CookieController()
+                        expires = datetime.datetime.now() + datetime.timedelta(days=5)
+                        controller.set("auth_session_token", token_from_url, expires=expires)
+                    except Exception:
+                        pass
+                    
+                    # Clear session_token from query parameters to prevent leakage in URL bar, keeping other params
+                    new_params = {k: v for k, v in st.query_params.items() if k != "session_token"}
+                    st.query_params.clear()
+                    for k, v in new_params.items():
+                        st.query_params[k] = v
+        except Exception:
+            pass
+
     # Try restoring session from browser cookie
     if get_current_user() is None:
         try:
@@ -122,11 +145,13 @@ def _set_session_and_rerun(user: dict) -> None:
     st.session_state[_SESSION_KEY] = user
     try:
         controller = CookieController()
-        expires = datetime.datetime.now() + datetime.timedelta(days=30)
+        # Set cookie to expire in 5 days as requested by user
+        expires = datetime.datetime.now() + datetime.timedelta(days=5)
         controller.set("auth_session_token", token, expires=expires)
     except Exception:
         pass
         
+    st.query_params["session_token"] = token
     st.rerun()
 
 

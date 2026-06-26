@@ -396,6 +396,15 @@ div[data-testid="stChatMessage"] {
     }
 }
 
+@media (max-width: 768px) {
+    .recent-path-card [data-testid="column"] {
+        width: 100% !important;
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+        margin-bottom: 0.8rem !important;
+    }
+}
+
 @media (max-width: 480px) {
     [data-testid="stAppViewContainer"] {
         font-size: 0.95rem;
@@ -417,6 +426,23 @@ div[data-testid="stChatMessage"] {
         width: 100%;
         justify-content: center;
     }
+    .login-card {
+        margin: 2rem 1rem 1rem 1rem !important;
+        padding: 1.5rem !important;
+        border-radius: 16px !important;
+    }
+}
+
+.response-block pre, .response-block code {
+    white-space: pre-wrap !important;
+    word-break: break-all !important;
+}
+
+.response-block table {
+    display: block !important;
+    width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
 }
 
 /* ── Suppress Streamlit rerun opacity flicker ────────────────────────── */
@@ -635,10 +661,10 @@ with st.sidebar:
         if not connected:
             if st.button(f"Connect {label}", key=f"connect_{provider}", use_container_width=True):
                 try:
-                    # Build redirect URL back to this app with oauth_callback param
+                    # Build redirect URL back to this app with oauth_callback and session_token params
                     app_url = os.getenv("APP_URL", "http://localhost:8501")
-                    # Session is preserved securely via cookies. No URL token needed.
-                    redirect = f"{app_url}?oauth_callback={provider}"
+                    session_token = user.get("session_token") or ""
+                    redirect = f"{app_url}?oauth_callback={provider}&session_token={session_token}"
                     
                     oauth_url = cc.get_oauth_url(user_id, provider, redirect_url=redirect)
                     st.markdown(

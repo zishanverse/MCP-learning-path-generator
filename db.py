@@ -7,7 +7,7 @@ Reads DATABASE_URL from the environment.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -68,6 +68,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=True)
     session_token = Column(String, nullable=True, unique=True, index=True)
+    session_expires_at = Column(DateTime, nullable=True)
     name = Column(String, nullable=True)
     created_at = Column(DateTime, default=_now, nullable=False)
 
@@ -76,6 +77,7 @@ class User(Base):
             "id": self.id,
             "email": self.email,
             "hashed_password": self.hashed_password,
+            "session_token": self.session_token,
             "name": self.name,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }
@@ -167,6 +169,16 @@ def init_db() -> None:
     except Exception:
         pass  # Column already exists
         
+    # Migration: add session_expires_at column to users
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN session_expires_at TIMESTAMP"
+            ))
+            conn.commit()
+    except Exception:
+        pass  # Column already exists
+        
     # Migration: add notion_parent_page_id column to existing databases
     try:
         with engine.connect() as conn:
@@ -243,18 +255,46 @@ def update_session_token(user_id: int, clear: bool = False) -> Optional[str]:
         user = session.query(User).filter(User.id == user_id).first()
         if not user:
             return None
-        token = None if clear else str(uuid.uuid4())
-        user.session_token = token
+        if clear:
+            user.session_token = None
+            user.session_expires_at = None
+            token = None
+        else:
+            token = str(uuid.uuid4())
+            user.session_token = token
+            user.session_expires_at = datetime.now(timezone.utc) + timedelta(days=5)
         session.commit()
         return token
 
 def get_user_by_session_token(token: str) -> Optional[dict]:
-    """Securely look up a user by their unguessable UUID session token."""
+    """Securely look up a user by their unguessable UUID session token, checking expiration."""
     if not token:
         return None
     with SessionLocal() as session:
         user = session.query(User).filter(User.session_token == token).first()
-        return user.to_dict() if user else None
+        if not user:
+            return None
+            
+        # Check if the token has expired
+        if user.session_expires_at:
+            expires_at = user.session_expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            
+            if expires_at < datetime.now(timezone.utc):
+                # Expired: clear it in the DB
+                user.session_token = None
+                user.session_expires_at = None
+                session.commit()
+                return None
+        else:
+            # If session_expires_at is missing (old user session), expire it to force a fresh secure token
+            user.session_token = None
+            user.session_expires_at = None
+            session.commit()
+            return None
+            
+        return user.to_dict()
 
 
 def get_user_by_id(user_id: int) -> Optional[dict]:
